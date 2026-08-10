@@ -44,15 +44,19 @@ function applyCamera(dt) {
 }
 
 let dragging = false, lastX = 0, lastY = 0, moved = 0;
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;                  // 只有左键参与拖拽
   dragging = true; moved = 0; lastX = e.clientX; lastY = e.clientY;
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener("pointerup", (e) => {
+  if (e.button !== 0) return;
   dragging = false;
   canvas.releasePointerCapture(e.pointerId);
   if (moved < 5) pick(e.clientX, e.clientY, true);
 });
+canvas.addEventListener("pointercancel", () => { dragging = false; });
 canvas.addEventListener("pointermove", (e) => {
   if (dragging) {
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -77,7 +81,13 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => {
   if (PAN_KEYS[e.code]) held.delete(PAN_KEYS[e.code]);
 });
+// 任何会夺走键盘焦点的动作都可能让 keyup 丢失，键就永远卡在按下状态。
+// 右键菜单是最容易触发的一种，这里把所有出口都兜住。
 addEventListener("blur", () => held.clear());
+addEventListener("contextmenu", () => held.clear());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) held.clear();
+});
 
 function pan(dt) {
   if (held.size === 0) return;
@@ -132,12 +142,47 @@ function giantness(lumCode) {
 
 /* ── 载入 ───────────────────────────────────────────── */
 const base = new URL(".", import.meta.url);
-const [starBuf, edgeBuf, weightBuf, meta] = await Promise.all([
-  fetch(new URL("data/stars.bin", base)).then((r) => r.arrayBuffer()),
-  fetch(new URL("data/edges.bin", base)).then((r) => r.arrayBuffer()),
-  fetch(new URL("data/edge_weights.bin", base)).then((r) => r.arrayBuffer()),
-  fetch(new URL("data/tracks.json", base)).then((r) => r.json()),
-]);
+const ASSETS = ["stars.bin", "edges.bin", "edge_weights.bin", "tracks.json"];
+
+const elBar = document.getElementById("load-bar");
+const elPct = document.getElementById("load-pct");
+
+// 响应头的 content-length 是 gzip 后的长度，而流里读到的是解压字节，
+// 两者对不上；sizes.json 存的是解压后的真实大小，进度才准。
+const assetSizes = await fetch(new URL("data/sizes.json", base))
+  .then((r) => r.json())
+  .catch(() => null);
+const totalBytes = assetSizes
+  ? ASSETS.reduce((sum, name) => sum + (assetSizes[name] || 0), 0) : 0;
+let loadedBytes = 0;
+
+function reportProgress() {
+  if (!totalBytes) return;
+  const pct = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
+  elBar.style.width = `${pct}%`;
+  elPct.textContent = `${pct}%`;
+}
+
+async function fetchTracked(name) {
+  const res = await fetch(new URL(`data/${name}`, base));
+  if (!res.body || !totalBytes) return res.arrayBuffer();
+  const reader = res.body.getReader();
+  const chunks = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loadedBytes += value.byteLength;
+    reportProgress();
+  }
+  return new Blob(chunks).arrayBuffer();
+}
+
+const [starBuf, edgeBuf, weightBuf, metaBuf] =
+  await Promise.all(ASSETS.map(fetchTracked));
+const meta = JSON.parse(new TextDecoder().decode(metaBuf));
+elBar.style.width = "100%";
+elPct.textContent = "100%";
 
 const raw = new Float32Array(starBuf);
 const N = meta.count;
@@ -372,13 +417,8 @@ const elLinks = document.getElementById("links");
 const elLinkCount = document.getElementById("link-count");
 const elLinkList = document.getElementById("link-list");
 const elCover = document.getElementById("cover");
-const elCoverImg = document.getElementById("poster");
-const elPlay = document.getElementById("play");
 
 const fmt = new Intl.NumberFormat("zh-CN");
-const CDN = meta.cdn || "https://i0.hdslb.com/";
-// 缩略图变体只有原图的 1/20 大小，够面板用
-const COVER_VARIANT = "@480w_300h_1c.webp";
 
 function select(i) {
   stopPlayer();
@@ -409,13 +449,7 @@ function select(i) {
   infobox.classList.add("on");
   elTitle.textContent = t.t;
 
-  elCoverImg.classList.remove("on");
-  if (t.c) {
-    elCoverImg.onload = () => elCoverImg.classList.add("on");
-    elCoverImg.src = CDN + t.c + COVER_VARIANT;
-  } else {
-    elCoverImg.removeAttribute("src");
-  }
+  mountPlayer(i);
 
   elAuthor.innerHTML = t.a
     ? `<em>UP 主</em>${escapeHtml(t.a)}`
@@ -503,29 +537,28 @@ function updateMarker() {
 
 /* ── 内嵌播放器 ─────────────────────────────────────── */
 function stopPlayer() {
-  elCover.classList.remove("playing");
   elCover.querySelector("iframe")?.remove();
 }
 
-function startPlayer(i) {
+// 选中即挂载，autoplay=0，播放器停在自己的首帧上 —— 封面直接借它的，
+// 不必再单独取一张图，也省掉了防盗链那套。
+function mountPlayer(i) {
   const t = tracks[i];
   if (!t) return;
   stopPlayer();
   const frame = document.createElement("iframe");
   const q = new URLSearchParams({
     isOutside: "true", bvid: t.b, cid: String(t.i), p: String(t.p),
-    autoplay: "1", danmaku: "0", high_quality: "1",
+    autoplay: "0", danmaku: "0", high_quality: "1",
   });
   frame.src = `https://player.bilibili.com/player.html?${q}`;
   frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
   frame.allowFullscreen = true;
   frame.scrolling = "no";
   frame.referrerPolicy = "no-referrer";
+  frame.addEventListener("load", () => frame.classList.add("on"));
   elCover.appendChild(frame);
-  elCover.classList.add("playing");
 }
-
-elPlay.addEventListener("click", () => { if (selected >= 0) startPlayer(selected); });
 
 /* ── 搜索 ───────────────────────────────────────────── */
 function escapeHtml(s) {

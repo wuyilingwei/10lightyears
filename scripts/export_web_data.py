@@ -79,8 +79,15 @@ def main():
         json.dumps(manifest, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
 
-    for name in ("stars.bin", "edges.bin", "edge_weights.bin", "tracks.json"):
-        print(f"  {name:18s} {(OUT / name).stat().st_size / 1024:8.1f} KB")
+    # 解压后的字节数，供前端把加载条做成真实进度。响应头里的 content-length
+    # 是 gzip 后的长度，和流式读到的解压字节对不上，所以单独存一份。
+    assets = ("stars.bin", "edges.bin", "edge_weights.bin", "tracks.json")
+    sizes = {name: (OUT / name).stat().st_size for name in assets}
+    (OUT / "sizes.json").write_text(json.dumps(sizes, separators=(",", ":")),
+                                    encoding="utf-8")
+
+    for name in assets:
+        print(f"  {name:18s} {sizes[name] / 1024:8.1f} KB")
     print(f"stars {len(stars)}, edges {len(edges)}, extent {manifest['extent']} ly")
 
 

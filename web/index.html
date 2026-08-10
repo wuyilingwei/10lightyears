@@ -71,6 +71,7 @@
   #infobox.on { opacity: 1; visibility: visible; }
   #detail { display: flex; flex-direction: column; gap: .62rem; }
 
+  /* 播放器一选中就载入，封面直接借用播放器自己的首帧，不再单独放一张图 */
   #cover {
     width: 100%; aspect-ratio: 16 / 10; border-radius: 10px;
     position: relative;
@@ -81,36 +82,15 @@
     display: grid; place-items: center;
     overflow: hidden; flex: none;
   }
-  #poster {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%; object-fit: cover;
-    opacity: 0; transition: opacity .4s ease;
-  }
-  #poster.on { opacity: 1; }
   #cover .glyph {
-    width: 3.2rem; height: auto; opacity: .58;
+    width: 3.2rem; height: auto; opacity: .5;
     filter: drop-shadow(0 0 14px rgba(242, 200, 75, .45));
   }
-  #cover.playing > .glyph, #cover.playing > #poster, #cover.playing > #play { display: none; }
-  #cover iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-
-  /* 点击封面才载入播放器，避免每次选星都拉一个 iframe */
-  #play {
-    position: absolute; inset: 0; z-index: 2; cursor: pointer;
-    border: 0; background: transparent; display: grid; place-items: center;
-    transition: background .25s ease;
+  #cover iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    opacity: 0; transition: opacity .35s ease;
   }
-  #play:hover { background: rgba(4, 9, 18, .34); }
-  #play::after {
-    content: ""; width: 2.8rem; height: 2.8rem; border-radius: 50%;
-    background: rgba(8, 14, 26, .74) url("data:image/svg+xml,\
-<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f2c84b'>\
-<path d='M9 6.5v11l9-5.5z'/></svg>") center/1.6rem no-repeat;
-    border: 1px solid rgba(242, 200, 75, .5);
-    box-shadow: 0 0 22px rgba(242, 200, 75, .28);
-    transition: transform .2s ease;
-  }
-  #play:hover::after { transform: scale(1.09); }
+  #cover iframe.on { opacity: 1; }
 
   #title {
     font-size: clamp(.84rem, 1.5vh, 1.04rem); line-height: 1.42; font-weight: 600;
@@ -238,9 +218,35 @@
   #loading {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
     background: var(--ink); transition: opacity .7s ease;
-    letter-spacing: .3em; font-size: .7rem; color: var(--text-dim);
+    color: var(--text-dim);
   }
   #loading.done { opacity: 0; pointer-events: none; }
+  #load-inner { display: flex; flex-direction: column; align-items: center; gap: .9rem; }
+  #load-mark { width: 2.6rem; height: auto; opacity: .85;
+               filter: drop-shadow(0 0 16px rgba(242, 200, 75, .5)); }
+  #load-text { letter-spacing: .3em; font-size: .68rem; }
+  #load-track {
+    width: min(18rem, 52vw); height: 2px; border-radius: 2px;
+    background: rgba(242, 200, 75, .16); overflow: hidden;
+  }
+  #load-bar {
+    height: 100%; width: 0%; border-radius: 2px;
+    background: linear-gradient(90deg, rgba(242,200,75,.5), var(--accent));
+    transition: width .18s ease-out;
+  }
+  #load-pct { font-size: .62rem; letter-spacing: .14em;
+              font-variant-numeric: tabular-nums; color: var(--accent); }
+
+  /* ── 页脚 ─────────────────────────────────────────── */
+  #footer {
+    position: fixed; left: 0; right: 0; bottom: .85rem; z-index: 5;
+    text-align: center; font-size: .6rem; letter-spacing: .09em;
+    color: var(--text-dim); line-height: 1.8;
+  }
+  #footer a { color: var(--text-dim); text-decoration: none;
+              border-bottom: 1px solid rgba(242, 200, 75, .22); transition: color .2s; }
+  #footer a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  #footer .sep { opacity: .45; margin: 0 .5rem; }
 
   @media (max-width: 860px) {
     :root { --col-w: min(20rem, 62vw); }
@@ -249,6 +255,7 @@
     #results { max-height: 38vh; }
     #link-list { max-height: 9rem; }
     #brand { right: 1.1rem; top: 1.1rem; gap: .55rem; }
+    #footer { display: none; }   /* 底部让位给搜索框 */
   }
 </style>
 </head>
@@ -266,8 +273,6 @@
   <div id="detail">
     <div id="cover">
       <img class="glyph" src="./icon.svg" alt="" width="52" height="52">
-      <img id="poster" alt="" referrerpolicy="no-referrer">
-      <button id="play" type="button" aria-label="播放"></button>
     </div>
     <div id="title"></div>
     <div id="author"></div>
@@ -296,7 +301,23 @@
 </div>
 
 <div id="tooltip"></div>
-<div id="loading">载入星表…</div>
+
+<div id="footer">
+  星表 Tycho-2 · Hipparcos<span class="sep">/</span>音频特征 MERT-v1-95M
+  <span class="sep">/</span><a href="https://github.com/wuyilingwei/10lightyears"
+     target="_blank" rel="noopener">开源仓库</a>
+  <span class="sep">/</span><a href="https://www.cloudflare.com/"
+     target="_blank" rel="noopener">Powered by Cloudflare</a>
+</div>
+
+<div id="loading">
+  <div id="load-inner">
+    <img id="load-mark" src="./icon.svg" alt="">
+    <div id="load-text">载入星表</div>
+    <div id="load-track"><div id="load-bar"></div></div>
+    <div id="load-pct">0%</div>
+  </div>
+</div>
 
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
