@@ -5,9 +5,15 @@ const STAR_STRIDE = 6;           // gx, gy, gz, vt_mag, bv_color, label
 const EDGE_BASE = 0.006;         // resting opacity of the similarity graph
 const EDGE_LIT = 0.9;
 
+const TRAIL_MAX = 0.87;      // 相机全速时上一帧的保留比例
+const TRAIL_DEADZONE = 0.05; // 低于此角速度不留尾，免得自转也拖影
+const TRAIL_EXP = 2 / 3;     // 尾长随角速度的次线性增长指数
+const TRAIL_K = 0.75;        // 使常规拖拽（约 1.3 rad/s）接近 TRAIL_MAX
+
 const canvas = document.getElementById("stage");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.autoClear = false;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 20000);
@@ -147,7 +153,7 @@ starGeom.setAttribute("flare", new THREE.BufferAttribute(new Float32Array(N), 1)
 
 const starMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  uniforms: { uScale: { value: 1 }, uTime: { value: 0 } },
+  uniforms: { uScale: { value: 1 }, uGain: { value: 1 } },
   vertexShader: `
     attribute float size;
     attribute float flare;
@@ -170,6 +176,7 @@ const starMat = new THREE.ShaderMaterial({
     varying vec3 vColor;
     varying float vFlare;
     varying float vGiant;
+    uniform float uGain;
     void main() {
       vec2 p = gl_PointCoord - 0.5;
       float r = length(p) * 2.0;
@@ -179,7 +186,7 @@ const starMat = new THREE.ShaderMaterial({
       float core = pow(1.0 - r, mix(2.8, 2.1, vGiant));
       float halo = pow(1.0 - r, mix(1.6, 1.0, vGiant)) * (0.18 + vGiant * 0.20);
       vec3 c = mix(vColor, vec3(1.0), core * 0.5 + vFlare * 0.4);
-      gl_FragColor = vec4(c, (core + halo) * (0.88 + vFlare * 1.0));
+      gl_FragColor = vec4(c, (core + halo) * (0.88 + vFlare * 1.0) * uGain);
     }`,
 });
 starMat.vertexColors = true;
@@ -218,6 +225,7 @@ edgeGeom.setAttribute("alpha", new THREE.BufferAttribute(edgeAlpha, 1));
 
 const edgeMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  uniforms: { uGain: { value: 1 } },
   vertexShader: `
     attribute float alpha;
     varying vec3 vColor; varying float vAlpha;
@@ -227,7 +235,8 @@ const edgeMat = new THREE.ShaderMaterial({
     }`,
   fragmentShader: `
     varying vec3 vColor; varying float vAlpha;
-    void main() { gl_FragColor = vec4(vColor, vAlpha); }`,
+    uniform float uGain;
+    void main() { gl_FragColor = vec4(vColor, vAlpha * uGain); }`,
 });
 edgeMat.vertexColors = true;
 const edgeLines = new THREE.LineSegments(edgeGeom, edgeMat);
@@ -247,10 +256,44 @@ for (let i = 0; i < dustCount; i++) {
 }
 const dustGeom = new THREE.BufferGeometry();
 dustGeom.setAttribute("position", new THREE.BufferAttribute(dust, 3));
-scene.add(new THREE.Points(dustGeom, new THREE.PointsMaterial({
+const DUST_OPACITY = 0.16;
+const dustMat = new THREE.PointsMaterial({
   size: 0.9, sizeAttenuation: false, color: 0x93b6d4,
-  transparent: true, opacity: 0.16, depthWrite: false,
-})));
+  transparent: true, opacity: DUST_OPACITY, depthWrite: false,
+});
+scene.add(new THREE.Points(dustGeom, dustMat));
+
+/* ── 运动拖尾 ───────────────────────────────────────
+   乒乓渲染目标做指数滑动平均：本帧 = 上一帧×decay + 场景×(1-decay)。
+   总亮度守恒，静止画面不会越积越亮；decay 由相机角速度驱动，
+   静止时归零，因此只有移动时才拖尾。 */
+const rtOpts = {
+  type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
+  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+};
+let rtPrev = new THREE.WebGLRenderTarget(2, 2, rtOpts);
+let rtNext = new THREE.WebGLRenderTarget(2, 2, rtOpts);
+
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const quadMat = new THREE.ShaderMaterial({
+  uniforms: { uTex: { value: null }, uDecay: { value: 0 } },
+  depthTest: false, depthWrite: false, blending: THREE.NoBlending,
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D uTex; uniform float uDecay;
+    varying vec2 vUv;
+    void main() { gl_FragColor = texture2D(uTex, vUv) * uDecay; }`,
+});
+const quadScene = new THREE.Scene();
+quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat));
+
+function setGain(g) {
+  starMat.uniforms.uGain.value = g;
+  edgeMat.uniforms.uGain.value = g;
+  dustMat.opacity = DUST_OPACITY * g;
+}
 
 /* ── 选中与悬停 ─────────────────────────────────────── */
 const flare = starGeom.getAttribute("flare");
@@ -485,18 +528,53 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   starMat.uniforms.uScale.value = h / 900;
+  const dpr = renderer.getPixelRatio();
+  rtPrev.setSize(w * dpr, h * dpr);
+  rtNext.setSize(w * dpr, h * dpr);
 }
 addEventListener("resize", resize);
 resize();
 
 let prev = performance.now();
+let decay = 0;
+const lastCamPos = new THREE.Vector3();
+
 function frame(now) {
-  const dt = Math.min((now - prev) / 1000, 0.1);
+  // 下界不能省：dt 为负会让下面的 pow 指数翻转，平滑系数变成负数，decay 发散
+  const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
   if (!dragging) cam.goalTheta += dt * 0.012;   // 缓慢自转
   applyCamera(dt);
   project();
+
+  // 位移除以轨道半径 -> 角速度，与场景尺度无关，推拉和旋转都能算进去
+  const speed = lastCamPos.distanceTo(camera.position)
+              / Math.max(dt, 1e-3) / Math.max(cam.radius, 1);
+  lastCamPos.copy(camera.position);
+  const excess = Math.max(speed - TRAIL_DEADZONE, 0);
+  const want = THREE.MathUtils.clamp(
+    TRAIL_K * Math.pow(excess, TRAIL_EXP), 0, TRAIL_MAX);
+  decay = THREE.MathUtils.clamp(
+    decay + (want - decay) * (1 - Math.pow(0.002, dt)), 0, TRAIL_MAX);
+
+  // 上一帧衰减后写入 rtNext，场景以 (1-decay) 的增益叠加其上
+  renderer.setRenderTarget(rtNext);
+  renderer.clear(true, true, true);
+  quadMat.uniforms.uTex.value = rtPrev.texture;
+  quadMat.uniforms.uDecay.value = decay;
+  renderer.render(quadScene, quadCam);
+  // 严格能量守恒（gain = 1-decay）会把尾巴压到看不见；留一部分累积，
+  // 让星点在移动时拉出更亮的光迹，静止时 decay=0 自动回到原亮度
+  setGain(1 - decay * 0.7);
   renderer.render(scene, camera);
+
+  renderer.setRenderTarget(null);
+  renderer.clear(true, true, true);
+  quadMat.uniforms.uTex.value = rtNext.texture;
+  quadMat.uniforms.uDecay.value = 1;
+  renderer.render(quadScene, quadCam);
+
+  const swap = rtPrev; rtPrev = rtNext; rtNext = swap;
   requestAnimationFrame(frame);
 }
 
