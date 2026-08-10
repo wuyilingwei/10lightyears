@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>十光年的距离</title>
 <meta name="description" content="星尘十周年 · 曲目星图">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>✦</text></svg>">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
 <style>
   :root {
     --ink: #05070f;
@@ -79,13 +79,17 @@
     font-size: 2rem; color: rgba(126, 216, 232, .55);
     overflow: hidden; flex: none;
   }
-  #cover img {
+  #poster {
     position: absolute; inset: 0;
     width: 100%; height: 100%; object-fit: cover;
     opacity: 0; transition: opacity .4s ease;
   }
-  #cover img.on { opacity: 1; }
-  #cover.playing > span, #cover.playing > img, #cover.playing > #play { display: none; }
+  #poster.on { opacity: 1; }
+  #cover .glyph {
+    width: 2.9rem; height: auto; opacity: .58;
+    filter: drop-shadow(0 0 14px rgba(126, 216, 232, .45));
+  }
+  #cover.playing > .glyph, #cover.playing > #poster, #cover.playing > #play { display: none; }
   #cover iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 
   /* 点击封面才载入播放器，避免每次选星都拉一个 iframe */
@@ -173,12 +177,20 @@
   #open:hover { background: rgba(126,216,232,.14); color: #fff; }
 
   #empty { color: var(--text-dim); font-size: .78rem; line-height: 2.1; letter-spacing: .1em; }
-  #empty span { display: block; color: var(--accent); font-size: 1.02rem; letter-spacing: .2em; }
+  #empty span { display: block; color: var(--accent); font-size: 1.02rem; letter-spacing: .2em;
+                margin-bottom: .3rem; }
+  #empty b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
 
   /* ── 角落信息 ─────────────────────────────────────── */
   #brand {
-    position: fixed; right: 2rem; top: 1.7rem; text-align: right; z-index: 5;
+    position: fixed; right: 2rem; top: 1.7rem; z-index: 5;
     pointer-events: none;
+    display: flex; align-items: center; gap: .8rem; text-align: right;
+    flex-direction: row-reverse;
+  }
+  #mark {
+    flex: none; width: clamp(1.9rem, 4vh, 2.5rem); height: auto;
+    filter: drop-shadow(0 0 12px rgba(126, 216, 232, .5));
   }
   #brand h1 {
     margin: 0; font-size: clamp(1.1rem, 2.4vh, 1.7rem); font-weight: 300;
@@ -186,15 +198,6 @@
     text-shadow: 0 0 26px rgba(126,216,232,.45);
   }
   #brand p { margin: .42rem 0 0; font-size: .62rem; letter-spacing: .22em; color: var(--text-dim); }
-
-  #hud {
-    position: fixed; right: 2rem; bottom: 1.6rem; text-align: right; z-index: 5;
-    font-size: .6rem; letter-spacing: .1em; color: var(--text-dim); line-height: 1.9;
-  }
-  #hud kbd {
-    font: inherit; padding: .06rem .34rem; border: 1px solid rgba(126,216,232,.22);
-    border-radius: 4px; color: var(--accent);
-  }
 
   #tooltip {
     position: fixed; z-index: 8; pointer-events: none; opacity: 0;
@@ -216,8 +219,7 @@
     #panel-inner { padding: 0 calc(var(--bow) + 1rem) 0 1.3rem; }
     #search-wrap { left: 1rem; right: 1rem; top: auto; bottom: 1rem; width: auto; }
     #results { max-height: 38vh; }
-    #brand { right: 1.1rem; top: 1.1rem; }
-    #hud { display: none; }
+    #brand { right: 1.1rem; top: 1.1rem; gap: .55rem; }
   }
 </style>
 </head>
@@ -227,11 +229,11 @@
 
 <div id="panel">
   <div id="panel-inner">
-    <div id="empty"><span>十光年的距离</span>5847 首曲目<br>各自对应一颗真实恒星<br>点击任意一颗</div>
+    <div id="empty"><span>十光年的距离</span><b id="count">—</b> 首曲目<br>各自对应一颗真实恒星<br>拖拽旋转 · 滚轮推拉 · 点击选中</div>
     <div id="detail" hidden>
       <div id="cover">
-        <span>✦</span>
-        <img alt="" referrerpolicy="no-referrer">
+        <img class="glyph" src="./icon.svg" alt="" width="46" height="46">
+        <img id="poster" alt="" referrerpolicy="no-referrer">
         <button id="play" type="button" aria-label="播放"></button>
       </div>
       <div id="title"></div>
@@ -251,13 +253,11 @@
 </div>
 
 <div id="brand">
-  <h1>十光年的距离</h1>
-  <p>STARDUST · 10TH ANNIVERSARY</p>
-</div>
-
-<div id="hud">
-  <div><kbd>拖拽</kbd> 旋转 · <kbd>滚轮</kbd> 推拉 · <kbd>点击</kbd> 选中 · <kbd>/</kbd> 搜索</div>
-  <div id="stat"></div>
+  <img id="mark" src="./icon.svg" alt="" width="34" height="34">
+  <div>
+    <h1>十光年的距离</h1>
+    <p>STARDUST · 10TH ANNIVERSARY</p>
+  </div>
 </div>
 
 <div id="tooltip"></div>

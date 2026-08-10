@@ -304,7 +304,7 @@ const elMeta = document.getElementById("meta");
 const elStar = document.getElementById("star-line");
 const elOpen = document.getElementById("open");
 const elCover = document.getElementById("cover");
-const elCoverImg = document.querySelector("#cover img");
+const elCoverImg = document.getElementById("poster");
 const elPlay = document.getElementById("play");
 
 const fmt = new Intl.NumberFormat("zh-CN");
@@ -477,9 +477,7 @@ addEventListener("keydown", (e) => {
 canvas.addEventListener("pointerdown", () => elResults.classList.remove("on"));
 
 /* ── 主循环 ─────────────────────────────────────────── */
-const stat = document.getElementById("stat");
-stat.textContent = `${fmt.format(N)} 曲目 · ${fmt.format(E)} 连线 · 银道坐标 · `
-  + `按光谱型着色 · 最远 ${fmt.format(Math.round(meta.dist_range[1]))} 光年`;
+document.getElementById("count").textContent = fmt.format(N);
 
 function resize() {
   const w = innerWidth, h = innerHeight;

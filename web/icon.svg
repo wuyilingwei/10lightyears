@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"
+     role="img" aria-label="十光年的距离">
+  <defs>
+    <linearGradient id="face-top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a8ecf7" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#7ed8e8" stop-opacity=".10"/>
+    </linearGradient>
+    <linearGradient id="face-left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7ed8e8" stop-opacity=".20"/>
+      <stop offset="1" stop-color="#7ed8e8" stop-opacity=".04"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 等轴测立方体：外接六边形 + 三条汇于中心的棱 -->
+  <g fill="none" stroke="#7ed8e8" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M16 4.4 25.6 9.9 25.6 22.1 16 27.6 6.4 22.1 6.4 9.9Z" fill="url(#face-left)"/>
+    <path d="M16 4.4 25.6 9.9 16 15.4 6.4 9.9Z" fill="url(#face-top)"/>
+    <path d="M16 4.4 25.6 9.9 25.6 22.1 16 27.6 6.4 22.1 6.4 9.9Z" stroke-width="1.6"/>
+    <path d="M16 15.4 16 27.6M16 15.4 25.6 9.9M16 15.4 6.4 9.9" stroke-width="1.35"/>
+  </g>
+
+  <!-- 中心的一点星尘 -->
+  <circle cx="16" cy="15.4" r="1.5" fill="#eaf7fb"/>
+  <circle cx="16" cy="15.4" r="3.1" fill="#7ed8e8" opacity=".22"/>
+</svg>
