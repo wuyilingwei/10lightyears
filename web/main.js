@@ -666,8 +666,8 @@ const autoBtn = document.getElementById("auto-btn");
 const bgm = document.getElementById("bgm");
 
 const auto = {
-  on: false, t0: 0, t1: 0, lastWasSelect: false,
-  from: null, to: null,
+  on: false, t0: 0, lastWasSelect: false,
+  segs: null, idx: 0, from: null,
 };
 const FIELD_R = 26;   // 随机目标点的活动半径，场景单位
 
@@ -681,66 +681,96 @@ function snapshotCam() {
   };
 }
 
-function focusStar(i, seconds) {
-  select(i);
-  const to = snapshotCam();
-  to.target.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-  to.radius = rnd(14, 34);
-  to.theta = cam.goalTheta + rnd(-0.9, 0.9);
-  to.phi = THREE.MathUtils.clamp(cam.goalPhi + rnd(-0.3, 0.3), 0.35, Math.PI - 0.35);
-  return { to, seconds };
+/* 瞄准：机位不动，只把注视点转到目标上。
+   相机位置由 target + 球面偏移决定，所以要反解出让 P 保持不变的那组
+   (theta, phi, radius)，否则"转向"会连人带机一起漂过去。 */
+const aimV = new THREE.Vector3();
+function aimAt(point) {
+  aimV.copy(camera.position).sub(point);
+  const r = Math.max(aimV.length(), 1);
+  return {
+    target: point.clone(),
+    radius: r,
+    theta: Math.atan2(aimV.x, aimV.z),
+    phi: Math.acos(THREE.MathUtils.clamp(aimV.y / r, -1, 1)),
+  };
+}
+
+const starPos = new THREE.Vector3();
+function starVec(i) {
+  return starPos.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+}
+
+// 一次动作拆成若干段依次播放，构成"瞄准 -> 飞过去 -> 停留"的节奏
+function startSegs(segs) {
+  auto.segs = segs;
+  auto.idx = 0;
+  auto.from = snapshotCam();
+  auto.t0 = performance.now();
+}
+
+function flyTo(point, finalRadius, flySec, holdSec) {
+  const aim = aimAt(point);
+  // 转向阶段带一点位移：完全定轴的转头太机械，像是被钉住了
+  aim.radius *= rnd(0.92, 1.0);
+  aim.theta += rnd(-0.06, 0.06);
+  aim.phi = THREE.MathUtils.clamp(aim.phi + rnd(-0.04, 0.04), 0.3, Math.PI - 0.3);
+  const fly = { ...aim, target: aim.target.clone(), radius: finalRadius };
+  const hold = { ...fly, target: fly.target.clone(), theta: fly.theta + rnd(0.2, 0.5) };
+  return [
+    { to: aim, dur: rnd(0.55, 0.85), ease: easeInOut },   // 瞄准，短促
+    { to: fly, dur: flySec, ease: easeInOut },            // 加速冲过去再减速
+    { to: hold, dur: holdSec, ease: (u) => u },           // 停留时缓慢环绕
+  ];
 }
 
 function nextAction() {
-  const now = performance.now();
-  auto.from = snapshotCam();
-
   // 上一步是聚焦时，有 25% 概率沿相近曲目走
-  let plan;
   if (auto.lastWasSelect && selected >= 0 && Math.random() < 0.25
       && neighbours[selected].length) {
     const e = neighbours[selected][(Math.random() * neighbours[selected].length) | 0];
     const other = edgeIdx[e * 2] === selected ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2];
-    plan = focusStar(other, 10);
+    select(other);
+    startSegs(flyTo(starVec(other), rnd(12, 26), rnd(1.4, 2.0), 10));
     auto.lastWasSelect = true;
   } else if (Math.random() < 0.55) {
-    plan = focusStar((Math.random() * N) | 0, 10);
+    const i = (Math.random() * N) | 0;
+    select(i);
+    startSegs(flyTo(starVec(i), rnd(12, 26), rnd(1.6, 2.4), 10));
     auto.lastWasSelect = true;
   } else {
-    // 移动 / 旋转 / 两者兼有，外加偶尔一次退到远景。
-    // 纯运镜段不留选中：信息框和引线挂着不动会显得镜头脱节
-    select(-1);
-    const to = snapshotCam();
-    const mode = Math.random();
     const wide = Math.random() < 0.18;
-    if (mode < 0.66) {                       // 含移动
-      to.target.set(rnd(-FIELD_R, FIELD_R), rnd(-FIELD_R * 0.4, FIELD_R * 0.4),
-                    rnd(-FIELD_R, FIELD_R));
-    }
-    if (mode > 0.33) {                       // 含旋转
-      to.theta = cam.goalTheta + rnd(-1.6, 1.6);
-      to.phi = THREE.MathUtils.clamp(cam.goalPhi + rnd(-0.5, 0.5), 0.3, Math.PI - 0.3);
-    }
-    to.radius = wide ? rnd(150, 260) : rnd(20, 90);
-    plan = { to, seconds: rnd(5, 10) };
+    // 纯运镜段不留选中，信息框和引线挂着不动会显得镜头脱节；
+    // 但退到全景是例外 —— 那正好用引线把选中的星指出来
+    if (!wide) select(-1);
+    const point = wide
+      ? new THREE.Vector3(rnd(-8, 8), rnd(-6, 6), rnd(-8, 8))
+      : new THREE.Vector3(rnd(-FIELD_R, FIELD_R), rnd(-FIELD_R * 0.4, FIELD_R * 0.4),
+                          rnd(-FIELD_R, FIELD_R));
+    const r = wide ? rnd(150, 260) : rnd(20, 90);
+    startSegs(flyTo(point, r, rnd(2.5, 4.0), rnd(2.5, 6.0)));
     auto.lastWasSelect = false;
   }
-
-  auto.to = plan.to;
-  auto.t0 = now;
-  auto.t1 = now + plan.seconds * 1000;
 }
 
 function stepAuto() {
   if (!auto.on) return;
-  const now = performance.now();
-  if (!auto.to || now >= auto.t1) { nextAction(); return; }
-  const u = easeInOut(THREE.MathUtils.clamp((now - auto.t0) / (auto.t1 - auto.t0), 0, 1));
-  const f = auto.from, t = auto.to;
+  if (!auto.segs || auto.idx >= auto.segs.length) { nextAction(); return; }
+
+  const seg = auto.segs[auto.idx];
+  const raw = (performance.now() - auto.t0) / (seg.dur * 1000);
+  const u = seg.ease(THREE.MathUtils.clamp(raw, 0, 1));
+  const f = auto.from, t = seg.to;
   cam.goalTheta = f.theta + (t.theta - f.theta) * u;
   cam.goalPhi = f.phi + (t.phi - f.phi) * u;
   cam.goalRadius = f.radius + (t.radius - f.radius) * u;
   cam.goalTarget.lerpVectors(f.target, t.target, u);
+
+  if (raw >= 1) {
+    auto.from = { ...t, target: t.target.clone() };
+    auto.idx += 1;
+    auto.t0 = performance.now();
+  }
 }
 
 function setAuto(on) {
