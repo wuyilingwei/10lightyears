@@ -1,0 +1,18 @@
+{
+  "created_at": "2026-05-29T00:27:09+0000",
+  "model": "m-a-p/MERT-v1-95M",
+  "sample_rate": 24000,
+  "clip_seconds": 30.0,
+  "seed": 42,
+  "n_features": 5850,
+  "n_failures": 0,
+  "source_raw_dirs": [
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-1566616540/fav_1566616540",
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-2544409240/fav_2544409240",
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-2895832840/fav_2895832840",
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-3313437440/fav_3313437440",
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-3442241540/fav_3442241540",
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-3559568340/fav_3559568340",
+    "/kaggle/input/shizaixingsheng-raw-compute-fav-3738643840/fav_3738643840"
+  ]
+}
