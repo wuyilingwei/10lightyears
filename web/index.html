@@ -14,10 +14,8 @@
     --accent-warm: #ffe6b0;
     --text: #dfe8f2;
     --text-dim: #8497ad;
-    /* 弧在中点的凸出。端点钉在屏幕左上/左下角，
-       R = (视口高²/4 + 凸出²) / (2×凸出)，34px 时 R ≈ 2996px */
-    --arc-bow: 34px;
     --col-w: 22rem;
+    --ring-r: 19px;   /* 选中六边形的外接圆半径，屏幕像素 */
   }
 
   * { box-sizing: border-box; }
@@ -41,32 +39,37 @@
       var(--ink);
   }
 
-  /* 左缘的柔和压暗，只为让文字在星场上可读，没有可见边界 */
-  #veil {
-    position: fixed; left: 0; top: 0; bottom: 0; width: min(36rem, 42vw);
-    z-index: 4; pointer-events: none;
-    background: linear-gradient(90deg,
-      rgba(5, 8, 16, .94) 0%, rgba(5, 8, 16, .86) 32%,
-      rgba(5, 8, 16, .54) 64%, rgba(5, 8, 16, 0) 100%);
-  }
-
-  /* 左缘弧：端点落在屏幕左上角与左下角，曲率只由 --arc-bow 决定 */
-  #arc {
-    position: fixed; left: 0; top: 0;
-    width: var(--arc-bow); height: 100vh;
-    border-radius: 0 100% 100% 0 / 0 50% 50% 0;
-    background: linear-gradient(90deg, rgba(9, 15, 28, .92), rgba(12, 19, 34, .42));
-    border-right: 1px solid rgba(242, 200, 75, .42);
-    box-shadow: 6px 0 40px -10px rgba(242, 200, 75, .34);
+  /* 连线层：屏幕空间 SVG，把信息框接到选中星 */
+  /* SVG 是替换元素，固有尺寸 300x150，inset:0 撑不开它，必须显式给宽高 */
+  #link-layer {
+    position: fixed; inset: 0; width: 100%; height: 100%;
     z-index: 5; pointer-events: none;
+    opacity: 0; transition: opacity .3s ease;
   }
+  #link-layer.on { opacity: 1; }
+  #leader { fill: none; stroke: var(--accent); stroke-width: 1;
+            stroke-dasharray: 3 4; opacity: .62; }
+  #ring { fill: none; stroke: var(--accent); stroke-width: 1.4; }
+  #ring-glow { fill: none; stroke: var(--accent); stroke-width: 4; opacity: .16; }
 
-  /* 内容列：位置与尺寸都与弧无关 */
-  #panel-inner {
+  /* 信息框：选中才出现，浮在星场上 */
+  #infobox {
     position: fixed; left: 3.4rem; top: 50%; transform: translateY(-50%);
     width: var(--col-w); z-index: 6;
     display: flex; flex-direction: column; gap: .62rem;
+    padding: 1rem 1.1rem 1.05rem;
+    border-radius: 14px;
+    background: linear-gradient(150deg, rgba(9, 15, 28, .93), rgba(7, 11, 21, .86));
+    border: 1px solid rgba(242, 200, 75, .26);
+    box-shadow: 0 20px 60px -24px rgba(0, 0, 0, .9),
+                0 0 40px -18px rgba(242, 200, 75, .35);
+    backdrop-filter: blur(16px) saturate(1.2);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    opacity: 0; visibility: hidden;
+    transition: opacity .28s ease, visibility .28s;
   }
+  #infobox.on { opacity: 1; visibility: visible; }
+  #detail { display: flex; flex-direction: column; gap: .62rem; }
 
   #cover {
     width: 100%; aspect-ratio: 16 / 10; border-radius: 10px;
@@ -167,11 +170,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  #empty { color: var(--text-dim); font-size: .78rem; line-height: 2.1; letter-spacing: .1em; }
-  #empty span { display: block; color: var(--accent); font-size: 1.02rem; letter-spacing: .2em;
-                margin-bottom: .3rem; }
-  #empty b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
-
   /* ── 搜索 ─────────────────────────────────────────── */
   #search-wrap { position: fixed; left: 3.4rem; top: 1.9rem; z-index: 7; width: min(22rem, 26vw); }
   #search {
@@ -245,9 +243,8 @@
   #loading.done { opacity: 0; pointer-events: none; }
 
   @media (max-width: 860px) {
-    :root { --col-w: min(20rem, 62vw); --arc-bow: 22px; }
-    #veil { width: 80vw; }
-    #panel-inner { left: 1.8rem; }
+    :root { --col-w: min(20rem, 62vw); }
+    #infobox { left: 1.2rem; }
     #search-wrap { left: 1rem; right: 1rem; top: auto; bottom: 1rem; width: auto; }
     #results { max-height: 38vh; }
     #link-list { max-height: 9rem; }
@@ -258,12 +255,15 @@
 <body>
 <div id="nebula"></div>
 <canvas id="stage"></canvas>
-<div id="veil"></div>
-<div id="arc"></div>
 
-<div id="panel-inner">
-  <div id="empty"><span>十光年的距离</span><b id="count">—</b> 首曲目<br>各自对应一颗真实恒星<br>拖拽旋转 · WASD 平移 · 滚轮推拉</div>
-  <div id="detail" hidden>
+<svg id="link-layer" aria-hidden="true">
+  <path id="leader"></path>
+  <polygon id="ring-glow"></polygon>
+  <polygon id="ring"></polygon>
+</svg>
+
+<div id="infobox">
+  <div id="detail">
     <div id="cover">
       <img class="glyph" src="./icon.svg" alt="" width="52" height="52">
       <img id="poster" alt="" referrerpolicy="no-referrer">

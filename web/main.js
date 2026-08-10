@@ -363,8 +363,7 @@ function hover(x, y) {
   tooltip.style.opacity = "1";
 }
 
-const panelEmpty = document.getElementById("empty");
-const panelDetail = document.getElementById("detail");
+const infobox = document.getElementById("infobox");
 const elTitle = document.getElementById("title");
 const elAuthor = document.getElementById("author");
 const elMeta = document.getElementById("meta");
@@ -391,7 +390,8 @@ function select(i) {
   }
   selected = i;
   if (i < 0) {
-    panelEmpty.hidden = false; panelDetail.hidden = true;
+    infobox.classList.remove("on");
+    linkLayer.classList.remove("on");
     flare.needsUpdate = true; edgeGeom.getAttribute("alpha").needsUpdate = true;
     return;
   }
@@ -406,7 +406,7 @@ function select(i) {
   edgeGeom.getAttribute("alpha").needsUpdate = true;
 
   const t = tracks[i];
-  panelEmpty.hidden = true; panelDetail.hidden = false;
+  infobox.classList.add("on");
   elTitle.textContent = t.t;
 
   elCoverImg.classList.remove("on");
@@ -454,6 +454,51 @@ function pick(x, y, focus) {
   const i = nearest(x, y, 16);
   if (i >= 0) select(i);
   else if (focus) { select(-1); cam.goalTarget.set(0, 0, 0); }
+}
+
+/* ── 选中标记：平顶正六边形 + 接到信息框的引线 ─────────
+   六边形与引线画在屏幕空间的 SVG 上，这样一端能贴住 DOM 信息框，
+   另一端跟住恒星的投影位置，尺寸也不随镜头远近变化。 */
+const linkLayer = document.getElementById("link-layer");
+const elLeader = document.getElementById("leader");
+const elRing = document.getElementById("ring");
+const elRingGlow = document.getElementById("ring-glow");
+const RING_R = parseFloat(
+  getComputedStyle(document.documentElement).getPropertyValue("--ring-r")) || 19;
+
+// 顶点取 0°/60°/…/300°，于是上下各有一条水平边 —— 平顶六边形
+const HEX = Array.from({ length: 6 }, (_, k) => {
+  const a = (k * Math.PI) / 3;
+  return [Math.cos(a), Math.sin(a)];
+});
+
+function hexPoints(cx, cy, r) {
+  return HEX.map(([dx, dy]) => `${(cx + dx * r).toFixed(1)},${(cy + dy * r).toFixed(1)}`)
+            .join(" ");
+}
+
+function updateMarker() {
+  if (selected < 0 || !visible[selected]) {
+    linkLayer.classList.remove("on");
+    return;
+  }
+  const sx = projected[selected * 2], sy = projected[selected * 2 + 1];
+  const pts = hexPoints(sx, sy, RING_R);
+  elRing.setAttribute("points", pts);
+  elRingGlow.setAttribute("points", pts);
+
+  // 引线从信息框朝向恒星的那一侧引出，止于六边形边缘
+  const box = infobox.getBoundingClientRect();
+  const ax = sx > box.left + box.width / 2 ? box.right : box.left;
+  const ay = box.top + box.height / 2;
+  const dx = sx - ax, dy = sy - ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const ex = sx - (dx / len) * RING_R, ey = sy - (dy / len) * RING_R;
+  // 中途打一个折角，读起来像标注引线而不是直连
+  const mx = ax + (ex - ax) * 0.45;
+  elLeader.setAttribute("d", `M${ax.toFixed(1)},${ay.toFixed(1)} `
+    + `L${mx.toFixed(1)},${ay.toFixed(1)} L${ex.toFixed(1)},${ey.toFixed(1)}`);
+  linkLayer.classList.add("on");
 }
 
 /* ── 内嵌播放器 ─────────────────────────────────────── */
@@ -564,7 +609,6 @@ addEventListener("keydown", (e) => {
 canvas.addEventListener("pointerdown", () => elResults.classList.remove("on"));
 
 /* ── 主循环 ─────────────────────────────────────────── */
-document.getElementById("count").textContent = fmt.format(N);
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -591,6 +635,7 @@ function frame(now) {
   pan(dt);
   applyCamera(dt);
   project();
+  updateMarker();
 
   // 位移除以轨道半径 -> 角速度，与场景尺度无关，推拉和旋转都能算进去
   const speed = lastCamPos.distanceTo(camera.position)
