@@ -26,12 +26,8 @@ const cam = {
   goalTheta: 0.7, goalPhi: 1.22, goalRadius: 54,
   minRadius: 2, maxRadius: 420,
 };
-const ORIGIN = new THREE.Vector3();
 
 function applyCamera(dt) {
-  // pulling back past the bulk of the field re-centres it, otherwise the disc
-  // drifts off-frame around whichever star was last selected
-  if (cam.radius > 130) cam.goalTarget.lerp(ORIGIN, 1 - Math.pow(0.06, dt));
   const k = 1 - Math.pow(0.0022, dt);
   cam.theta += (cam.goalTheta - cam.theta) * k;
   cam.phi += (cam.goalPhi - cam.phi) * k;
@@ -68,6 +64,32 @@ canvas.addEventListener("pointermove", (e) => {
     hover(e.clientX, e.clientY);
   }
 });
+/* WASD 沿当前视角平移，视点不再钉在原点 */
+const held = new Set();
+const PAN_KEYS = { KeyW: "up", KeyS: "down", KeyA: "left", KeyD: "right" };
+const panRight = new THREE.Vector3();
+const panUp = new THREE.Vector3();
+
+addEventListener("keydown", (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (PAN_KEYS[e.code]) { held.add(PAN_KEYS[e.code]); e.preventDefault(); }
+});
+addEventListener("keyup", (e) => {
+  if (PAN_KEYS[e.code]) held.delete(PAN_KEYS[e.code]);
+});
+addEventListener("blur", () => held.clear());
+
+function pan(dt) {
+  if (held.size === 0) return;
+  // 速度随轨道半径缩放，远近手感一致
+  const step = cam.radius * 0.9 * dt;
+  camera.matrixWorld.extractBasis(panRight, panUp, new THREE.Vector3());
+  if (held.has("right")) cam.goalTarget.addScaledVector(panRight, step);
+  if (held.has("left")) cam.goalTarget.addScaledVector(panRight, -step);
+  if (held.has("up")) cam.goalTarget.addScaledVector(panUp, step);
+  if (held.has("down")) cam.goalTarget.addScaledVector(panUp, -step);
+}
+
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   cam.goalRadius = THREE.MathUtils.clamp(
@@ -267,9 +289,11 @@ scene.add(new THREE.Points(dustGeom, dustMat));
    乒乓渲染目标做指数滑动平均：本帧 = 上一帧×decay + 场景×(1-decay)。
    总亮度守恒，静止画面不会越积越亮；decay 由相机角速度驱动，
    静止时归零，因此只有移动时才拖尾。 */
+// samples 不能省：场景改渲染到离屏目标后就绕开了画布自带的 MSAA，
+// 连线会重新出现锯齿，得让目标自己多重采样
 const rtOpts = {
   type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
-  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, samples: 4,
 };
 let rtPrev = new THREE.WebGLRenderTarget(2, 2, rtOpts);
 let rtNext = new THREE.WebGLRenderTarget(2, 2, rtOpts);
@@ -345,7 +369,9 @@ const elTitle = document.getElementById("title");
 const elAuthor = document.getElementById("author");
 const elMeta = document.getElementById("meta");
 const elStar = document.getElementById("star-line");
-const elOpen = document.getElementById("open");
+const elLinks = document.getElementById("links");
+const elLinkCount = document.getElementById("link-count");
+const elLinkList = document.getElementById("link-list");
 const elCover = document.getElementById("cover");
 const elCoverImg = document.getElementById("poster");
 const elPlay = document.getElementById("play");
@@ -394,17 +420,35 @@ function select(i) {
   elAuthor.innerHTML = t.a
     ? `<em>UP 主</em>${escapeHtml(t.a)}`
     : `<em>UP 主</em>UID ${t.u}`;
-  elMeta.innerHTML =
-    `投稿 <b>${t.d}</b> · 播放 <b>${fmt.format(t.v)}</b><br>` +
-    `相近曲目 <b>${neighbours[i].length}</b> 首`;
+  elMeta.innerHTML = `投稿 <b>${t.d}</b> · 播放 <b>${fmt.format(t.v)}</b>`;
   const sp = t.y ? ` · ${t.y}` : "";
   elStar.textContent =
     `${t.s}${sp} · ${fmt.format(Math.round(t.l))} 光年 · 视星等 ${t.m}`;
-  elOpen.href = `https://www.bilibili.com/video/${t.b}${t.p > 1 ? `?p=${t.p}` : ""}`;
+  fillLinks(i);
 
   cam.goalTarget.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
   cam.goalRadius = Math.max(cam.minRadius, Math.min(cam.goalRadius, 26));
 }
+
+function fillLinks(i) {
+  const rows = neighbours[i]
+    .map((e) => ({
+      other: edgeIdx[e * 2] === i ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2],
+      w: edgeW[e],
+    }))
+    .sort((a, b) => b.w - a.w);
+  elLinkCount.textContent = rows.length;
+  elLinkList.innerHTML = rows.map((r) =>
+    `<div class="link" data-i="${r.other}">`
+    + `<span class="t">${escapeHtml(tracks[r.other].t)}</span>`
+    + `<span class="w">${r.w.toFixed(2)}</span></div>`).join("");
+  elLinks.open = false;
+}
+
+elLinkList.addEventListener("click", (e) => {
+  const row = e.target.closest(".link");
+  if (row) select(Number(row.dataset.i));
+});
 
 function pick(x, y, focus) {
   const i = nearest(x, y, 16);
@@ -543,7 +587,8 @@ function frame(now) {
   // 下界不能省：dt 为负会让下面的 pow 指数翻转，平滑系数变成负数，decay 发散
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
-  if (!dragging) cam.goalTheta += dt * 0.012;   // 缓慢自转
+  if (!dragging && held.size === 0) cam.goalTheta += dt * 0.012;   // 缓慢自转
+  pan(dt);
   applyCamera(dt);
   project();
 

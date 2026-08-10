@@ -9,15 +9,15 @@
 <style>
   :root {
     --ink: #05070f;
-    --ink-2: #0a0f1d;
     --line: rgba(242, 200, 75, 0.22);
     --accent: #f2c84b;
     --accent-warm: #ffe6b0;
     --text: #dfe8f2;
     --text-dim: #8497ad;
-    /* 弓形只是背景，尺寸与内容无关，不由内容撑开 */
-    --panel-w: min(23rem, 25vw);
-    --col-w: 16rem;
+    /* 弧在中点的凸出。端点钉在屏幕左上/左下角，
+       R = (视口高²/4 + 凸出²) / (2×凸出)，34px 时 R ≈ 2996px */
+    --arc-bow: 34px;
+    --col-w: 22rem;
   }
 
   * { box-sizing: border-box; }
@@ -41,43 +41,41 @@
       var(--ink);
   }
 
-  /* ── 左侧巨圆截边 ─────────────────────────────────── */
-  /* 弧度要很小，就不能让端点落在屏幕角：端点钉住时弦被视口高锁死在 100vh，
-     R 被弦项主导，收窄面板也压不平。改为面板远高于视口，只露出椭圆中段。
-     垂直半轴 = 120vh 时，视口内可见矢高约 0.09×面板宽，反推 R ≈ 3100px。 */
-  #panel {
-    position: fixed; left: 0; top: 50%;
-    width: var(--panel-w); height: 240vh;
-    transform: translateY(-50%);
-    border-radius: 0 100% 100% 0 / 0 50% 50% 0;
-    background: linear-gradient(96deg,
-                rgba(9, 16, 30, 0.95) 0%,
-                rgba(8, 13, 26, 0.90) 60%,
-                rgba(7, 12, 23, 0.72) 88%,
-                rgba(7, 12, 23, 0.44) 100%);
-    backdrop-filter: blur(18px) saturate(1.25);
-    -webkit-backdrop-filter: blur(18px) saturate(1.25);
-    border-right: 1px solid rgba(242, 200, 75, 0.20);
-    box-shadow: 30px 0 110px -40px rgba(168, 130, 50, 0.40);
-    display: flex; align-items: center;
-    z-index: 5;
+  /* 左缘的柔和压暗，只为让文字在星场上可读，没有可见边界 */
+  #veil {
+    position: fixed; left: 0; top: 0; bottom: 0; width: min(36rem, 42vw);
+    z-index: 4; pointer-events: none;
+    background: linear-gradient(90deg,
+      rgba(5, 8, 16, .94) 0%, rgba(5, 8, 16, .86) 32%,
+      rgba(5, 8, 16, .54) 64%, rgba(5, 8, 16, 0) 100%);
   }
 
+  /* 左缘弧：端点落在屏幕左上角与左下角，曲率只由 --arc-bow 决定 */
+  #arc {
+    position: fixed; left: 0; top: 0;
+    width: var(--arc-bow); height: 100vh;
+    border-radius: 0 100% 100% 0 / 0 50% 50% 0;
+    background: linear-gradient(90deg, rgba(9, 15, 28, .92), rgba(12, 19, 34, .42));
+    border-right: 1px solid rgba(242, 200, 75, .42);
+    box-shadow: 6px 0 40px -10px rgba(242, 200, 75, .34);
+    z-index: 5; pointer-events: none;
+  }
+
+  /* 内容列：位置与尺寸都与弧无关 */
   #panel-inner {
-    width: var(--col-w); flex: none;
-    margin-left: 2rem;
-    display: flex; flex-direction: column; gap: .66rem;
+    position: fixed; left: 3.4rem; top: 50%; transform: translateY(-50%);
+    width: var(--col-w); z-index: 6;
+    display: flex; flex-direction: column; gap: .62rem;
   }
 
   #cover {
     width: 100%; aspect-ratio: 16 / 10; border-radius: 10px;
     position: relative;
     background:
-      radial-gradient(circle at 50% 45%, rgba(242, 200, 75, .34), transparent 62%),
+      radial-gradient(circle at 50% 45%, rgba(242, 200, 75, .30), transparent 62%),
       linear-gradient(150deg, #101d33, #0a1120);
     border: 1px solid rgba(242, 200, 75, .20);
     display: grid; place-items: center;
-    font-size: 2rem; color: rgba(242, 200, 75, .55);
     overflow: hidden; flex: none;
   }
   #poster {
@@ -87,7 +85,7 @@
   }
   #poster.on { opacity: 1; }
   #cover .glyph {
-    width: 2.9rem; height: auto; opacity: .58;
+    width: 3.2rem; height: auto; opacity: .58;
     filter: drop-shadow(0 0 14px rgba(242, 200, 75, .45));
   }
   #cover.playing > .glyph, #cover.playing > #poster, #cover.playing > #play { display: none; }
@@ -101,21 +99,81 @@
   }
   #play:hover { background: rgba(4, 9, 18, .34); }
   #play::after {
-    content: ""; width: 2.6rem; height: 2.6rem; border-radius: 50%;
+    content: ""; width: 2.8rem; height: 2.8rem; border-radius: 50%;
     background: rgba(8, 14, 26, .74) url("data:image/svg+xml,\
 <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f2c84b'>\
-<path d='M9 6.5v11l9-5.5z'/></svg>") center/1.5rem no-repeat;
+<path d='M9 6.5v11l9-5.5z'/></svg>") center/1.6rem no-repeat;
     border: 1px solid rgba(242, 200, 75, .5);
     box-shadow: 0 0 22px rgba(242, 200, 75, .28);
     transition: transform .2s ease;
   }
   #play:hover::after { transform: scale(1.09); }
 
-  #author { font-size: .76rem; color: var(--text); letter-spacing: .02em; }
+  #title {
+    font-size: clamp(.84rem, 1.5vh, 1.04rem); line-height: 1.42; font-weight: 600;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  #author { font-size: .78rem; color: var(--text); letter-spacing: .02em; }
   #author em { font-style: normal; color: var(--text-dim); font-size: .66rem; margin-right: .4rem; }
 
+  .rule {
+    height: 1px; flex: none;
+    background: linear-gradient(90deg, rgba(242,200,75,.34), transparent);
+  }
+
+  .meta { font-size: clamp(.63rem, 1.06vh, .75rem); color: var(--text-dim); line-height: 1.7; }
+  .meta b { color: var(--accent); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  #star-line { font-size: clamp(.61rem, 1vh, .73rem); color: var(--accent-warm); letter-spacing: .02em; }
+
+  /* ── 相近曲目：默认折叠 ───────────────────────────── */
+  #links { font-size: .7rem; }
+  #links summary {
+    cursor: pointer; list-style: none; user-select: none;
+    color: var(--text-dim); letter-spacing: .04em;
+    padding: .3rem 0; display: flex; align-items: center; gap: .4rem;
+  }
+  #links summary::-webkit-details-marker { display: none; }
+  #links summary::before {
+    content: "▸"; color: var(--accent); font-size: .62rem;
+    transition: transform .2s ease; display: inline-block;
+  }
+  #links[open] summary::before { transform: rotate(90deg); }
+  #links summary:hover { color: var(--text); }
+  #links summary b { color: var(--accent); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  #link-list {
+    max-height: 15rem; overflow-y: auto;
+    border-left: 1px solid rgba(242, 200, 75, .18); padding-left: .6rem;
+    scrollbar-width: thin; scrollbar-color: rgba(242,200,75,.3) transparent;
+  }
+  #link-list::-webkit-scrollbar { width: 5px; }
+  #link-list::-webkit-scrollbar-thumb { background: rgba(242,200,75,.3); border-radius: 3px; }
+
+  .link {
+    display: flex; gap: .5rem; align-items: baseline;
+    padding: .26rem .3rem; cursor: pointer; border-radius: 5px;
+    line-height: 1.35;
+  }
+  .link:hover { background: rgba(242, 200, 75, .12); }
+  .link .t {
+    flex: 1; min-width: 0; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .link .w {
+    flex: none; color: var(--accent); font-size: .6rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #empty { color: var(--text-dim); font-size: .78rem; line-height: 2.1; letter-spacing: .1em; }
+  #empty span { display: block; color: var(--accent); font-size: 1.02rem; letter-spacing: .2em;
+                margin-bottom: .3rem; }
+  #empty b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+
   /* ── 搜索 ─────────────────────────────────────────── */
-  #search-wrap { position: fixed; left: 2.4rem; top: 1.9rem; z-index: 7; width: min(24rem, 26vw); }
+  #search-wrap { position: fixed; left: 3.4rem; top: 1.9rem; z-index: 7; width: min(22rem, 26vw); }
   #search {
     width: 100%; padding: .52rem .9rem;
     background: rgba(8, 14, 26, .82); color: var(--text);
@@ -153,35 +211,6 @@
   .hit mark { background: none; color: var(--accent); }
   #results .none { padding: .6rem .8rem; font-size: .68rem; color: var(--text-dim); }
 
-  #title {
-    font-size: clamp(.82rem, 1.5vh, 1.02rem); line-height: 1.42; font-weight: 600;
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .meta { font-size: clamp(.62rem, 1.06vh, .74rem); color: var(--text-dim); line-height: 1.7; }
-  .meta b { color: var(--accent); font-weight: 500; font-variant-numeric: tabular-nums; }
-
-  .rule {
-    height: 1px; flex: none;
-    background: linear-gradient(90deg, transparent, rgba(242,200,75,.34), transparent);
-  }
-
-  #star-line { font-size: clamp(.6rem, 1vh, .72rem); color: var(--accent-warm); letter-spacing: .02em; }
-
-  #open {
-    display: inline-block; margin-top: .1rem; padding: .34rem .8rem;
-    font-size: .68rem; letter-spacing: .06em; text-decoration: none;
-    color: var(--accent); border: 1px solid rgba(242,200,75,.35); border-radius: 999px;
-    transition: background .2s, color .2s;
-  }
-  #open:hover { background: rgba(242,200,75,.14); color: #fff; }
-
-  #empty { color: var(--text-dim); font-size: .78rem; line-height: 2.1; letter-spacing: .1em; }
-  #empty span { display: block; color: var(--accent); font-size: 1.02rem; letter-spacing: .2em;
-                margin-bottom: .3rem; }
-  #empty b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
-
   /* ── 角落信息 ─────────────────────────────────────── */
   #brand {
     position: fixed; right: 2rem; top: 1.7rem; z-index: 5;
@@ -216,10 +245,12 @@
   #loading.done { opacity: 0; pointer-events: none; }
 
   @media (max-width: 860px) {
-    :root { --panel-w: 76vw; --col-w: min(17rem, 52vw); }
-    #panel-inner { margin-left: 1.4rem; }
+    :root { --col-w: min(20rem, 62vw); --arc-bow: 22px; }
+    #veil { width: 80vw; }
+    #panel-inner { left: 1.8rem; }
     #search-wrap { left: 1rem; right: 1rem; top: auto; bottom: 1rem; width: auto; }
     #results { max-height: 38vh; }
+    #link-list { max-height: 9rem; }
     #brand { right: 1.1rem; top: 1.1rem; gap: .55rem; }
   }
 </style>
@@ -227,23 +258,26 @@
 <body>
 <div id="nebula"></div>
 <canvas id="stage"></canvas>
+<div id="veil"></div>
+<div id="arc"></div>
 
-<div id="panel">
-  <div id="panel-inner">
-    <div id="empty"><span>十光年的距离</span><b id="count">—</b> 首曲目<br>各自对应一颗真实恒星<br>拖拽旋转 · 滚轮推拉 · 点击选中</div>
-    <div id="detail" hidden>
-      <div id="cover">
-        <img class="glyph" src="./icon.svg" alt="" width="46" height="46">
-        <img id="poster" alt="" referrerpolicy="no-referrer">
-        <button id="play" type="button" aria-label="播放"></button>
-      </div>
-      <div id="title"></div>
-      <div id="author"></div>
-      <div class="rule"></div>
-      <div class="meta" id="meta"></div>
-      <div id="star-line"></div>
-      <a id="open" target="_blank" rel="noopener">前往 BILIBILI</a>
+<div id="panel-inner">
+  <div id="empty"><span>十光年的距离</span><b id="count">—</b> 首曲目<br>各自对应一颗真实恒星<br>拖拽旋转 · WASD 平移 · 滚轮推拉</div>
+  <div id="detail" hidden>
+    <div id="cover">
+      <img class="glyph" src="./icon.svg" alt="" width="52" height="52">
+      <img id="poster" alt="" referrerpolicy="no-referrer">
+      <button id="play" type="button" aria-label="播放"></button>
     </div>
+    <div id="title"></div>
+    <div id="author"></div>
+    <div class="rule"></div>
+    <div class="meta" id="meta"></div>
+    <div id="star-line"></div>
+    <details id="links">
+      <summary>相近曲目 <b id="link-count">0</b> 首</summary>
+      <div id="link-list"></div>
+    </details>
   </div>
 </div>
 
