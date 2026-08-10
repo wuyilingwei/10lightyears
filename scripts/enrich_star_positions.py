@@ -89,6 +89,43 @@ def fetch_positions():
     )
 
 
+# Spectral sequence as a continuous axis: class index + subclass/10, so B9.5
+# sits just short of A0. The viewer interpolates its colour ramp along this.
+SPECTRAL_ORDER = "OBAFGKM"
+SPECTRAL_RE = re.compile(r"([OBAFGKM])\s*(\d(?:\.\d)?)?")
+# Longest alternative first so IV/VI/III win over I and V. No \b: in "K0III"
+# the digit and the numeral are both word characters, so there is no boundary
+# between them. Trailing guard is uppercase-only to keep "Iab", "IIIa" etc.
+LUMINOSITY_RE = re.compile(r"(?<![A-Z])(VI|IV|III|II|I|V)(?![A-Z])")
+
+
+def parse_spectral(sp):
+    """-> (position on the O..M axis, luminosity class) ; NaN/'' when unparsable."""
+    if not isinstance(sp, str) or not sp.strip():
+        return np.nan, ""
+    m = SPECTRAL_RE.search(sp)
+    if not m:
+        return np.nan, ""          # W/C/S/N and other exotics fall through
+    letter = m.group(1).upper()
+    sub = float(m.group(2)) if m.group(2) else 5.0
+    lum = LUMINOSITY_RE.search(sp, m.end())
+    return SPECTRAL_ORDER.index(letter) + sub / 10.0, lum.group(1) if lum else ""
+
+
+def fetch_spectral_types(hip_ids):
+    ids = sorted({int(h) for h in hip_ids if pd.notna(h)})
+
+    def build():
+        chunks = []
+        for start in range(0, len(ids), 900):
+            batch = ",".join(str(i) for i in ids[start:start + 900])
+            chunks.append(tap_query(
+                f'SELECT HIP,SpType FROM "I/239/hip_main" WHERE HIP IN ({batch})'))
+        return pd.concat(chunks, ignore_index=True).drop_duplicates("HIP")
+
+    return cached("hip_sptype.csv", build)
+
+
 def fetch_parallax(hip_ids):
     ids = sorted({int(h) for h in hip_ids if pd.notna(h)})
 
@@ -187,6 +224,15 @@ def enrich(src):
     dist_ly = dist_pc * PC_TO_LY
     print(f"  prior length L = {length_pc:.1f} pc (mode {2 * length_pc * PC_TO_LY:.0f} ly)")
 
+    spec = fetch_spectral_types(df.HIP)
+    df = df.merge(spec, on="HIP", how="left")
+    parsed = [parse_spectral(s) for s in df.SpType]
+    spec_axis = pd.Series([p[0] for p in parsed])
+    lum_class = pd.Series([p[1] for p in parsed])
+    print(f"  spectral types: {int(df.SpType.notna().sum())} fetched, "
+          f"{int(spec_axis.notna().sum())} on the OBAFGKM axis, "
+          f"{int((lum_class != '').sum())} with a luminosity class")
+
     gx, gy, gz, gl, gb = to_galactic(ux, uy, uz)
 
     page = src.bv_id.str.extract(r"_p(\d+)$")[0]
@@ -205,6 +251,9 @@ def enrich(src):
         "vt_mag": df.VTmag,
         "bt_mag": df.BTmag,
         "bv_color": (df.BTmag - df.VTmag).round(4),
+        "sp_type": df.SpType,
+        "sp_axis": spec_axis.round(3),
+        "lum_class": lum_class,
 
         "gl_deg": gl.round(6),
         "gb_deg": gb.round(6),
@@ -239,6 +288,24 @@ def enrich(src):
     return out, ra, de, ux, uy, df
 
 
+def attach_author_and_cover(out):
+    """Join the Bilibili scrape, if it has been run. Optional so the pipeline
+    still produces a dataset on a fresh clone."""
+    path = ROOT / "mapping_index/track_meta.csv"
+    if not path.exists():
+        print("  no track_meta.csv yet; author/cover columns left blank")
+        out["author"] = ""
+        out["cover"] = ""
+        return out
+    meta = pd.read_csv(path).drop_duplicates("bv_id")
+    merged = out.merge(meta[["bv_id", "author", "pic"]], on="bv_id", how="left")
+    merged["author"] = merged.author.fillna("")
+    merged["cover"] = merged.pic.fillna("")
+    print(f"  author on {int((merged.author != '').sum())} rows, "
+          f"cover on {int((merged.cover != '').sum())} rows")
+    return merged.drop(columns=["pic"])
+
+
 def attach_track_metadata(out):
     """Pull title/part/cid from the MERT feature table, which also carries the
     authoritative uid/date/n_view (the mapping CSV has three blank rows)."""
@@ -257,6 +324,8 @@ def attach_track_metadata(out):
 
     # a handful of tracks were never scraped upstream; they carry no author,
     # date or view count in either source and are dropped rather than rendered
+    merged = attach_author_and_cover(merged)
+
     incomplete = merged[["uid", "date", "n_view"]].isna().any(axis=1)
     if incomplete.any():
         print(f"  dropping {int(incomplete.sum())} tracks with no author/date/views: "

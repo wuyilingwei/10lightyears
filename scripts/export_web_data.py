@@ -15,7 +15,11 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "web/data"
-STARS_PER_RECORD = 6  # gx, gy, gz (ly), vt_mag, bv_color, label
+STARS_PER_RECORD = 6  # gx, gy, gz (ly), vt_mag, sp_axis, lum_code
+LUMINOSITY_CODE = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
+CDN = "https://i0.hdslb.com/"
+# 60% of the corpus is A/B/K; without a real type fall back to mid-F (white)
+SP_FALLBACK = 3.5
 
 
 def main():
@@ -29,8 +33,8 @@ def main():
     packed[:, 1] = stars.gy_ly
     packed[:, 2] = stars.gz_ly
     packed[:, 3] = stars.vt_mag
-    packed[:, 4] = stars.bv_color.fillna(0.0)
-    packed[:, 5] = stars.label
+    packed[:, 4] = stars.sp_axis.fillna(SP_FALLBACK)
+    packed[:, 5] = stars.lum_class.fillna("").map(LUMINOSITY_CODE).fillna(0)
     packed.tofile(OUT / "stars.bin")
 
     if len(stars) > np.iinfo(np.uint16).max:
@@ -41,12 +45,20 @@ def main():
     pairs.tofile(OUT / "edges.bin")
     np.asarray(edges.similarity, dtype=np.float32).tofile(OUT / "edge_weights.bin")
 
+    # covers all live on one CDN; store the path and rebuild the URL client-side
+    cover = (stars.get("cover", pd.Series([""] * len(stars))).fillna("")
+             .str.replace(r"^https?://[^/]+/", "", regex=True))
+    author = stars.get("author", pd.Series([""] * len(stars))).fillna("")
+    sp = stars.sp_type.fillna("")
+
     tracks = [
         {"t": t, "b": b, "p": int(p), "u": str(u), "d": d, "v": int(v),
-         "s": s, "l": round(float(ly), 1), "m": round(float(m), 2)}
-        for t, b, p, u, d, v, s, ly, m in zip(
+         "s": s, "l": round(float(ly), 1), "m": round(float(m), 2),
+         "a": a, "c": c, "y": y}
+        for t, b, p, u, d, v, s, ly, m, a, c, y in zip(
             stars.title, stars.bv_id, stars.page, stars.uid, stars.date,
-            stars.n_view, stars.tyc2_id, stars.dist_ly, stars.vt_mag)
+            stars.n_view, stars.tyc2_id, stars.dist_ly, stars.vt_mag,
+            author, cover, sp)
     ]
     manifest = {
         "count": len(stars),
@@ -58,6 +70,9 @@ def main():
                       round(float(stars.vt_mag.max()), 3)],
         "dist_range": [round(float(stars.dist_ly.min()), 1),
                        round(float(stars.dist_ly.max()), 1)],
+        "cdn": CDN,
+        "covers": int((cover != "").sum()),
+        "authors": int((author != "").sum()),
         "tracks": tracks,
     }
     (OUT / "tracks.json").write_text(

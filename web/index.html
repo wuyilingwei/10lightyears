@@ -15,7 +15,8 @@
     --accent-warm: #f0c98a;
     --text: #dfe8f2;
     --text-dim: #8497ad;
-    --panel-w: min(46vh, 33vw);
+    --panel-w: min(27rem, 30vw);
+    --bow: 3.4vw;   /* 弧的凸出深度，相对 180vh 的高度极小 -> 巨圆 */
   }
 
   * { box-sizing: border-box; }
@@ -40,34 +41,36 @@
   }
 
   /* ── 左侧半圆叠加层 ───────────────────────────────── */
-  /* 真半圆：直边贴屏幕左缘，弧面朝向星图 */
+  /* 一个超大圆的截边：面板比视口高得多，右缘只是那个巨圆的一小段弧。
+     水平圆角半径 --bow 远小于垂直半径，弧就很平缓；上下都溢出屏幕，
+     看不到弧的收口，读起来才像"截了一小块"而不是半圆。 */
   #panel {
     position: fixed; left: 0; top: 50%;
-    width: var(--panel-w); height: calc(var(--panel-w) * 2);
-    max-height: 96vh;
+    width: var(--panel-w); height: 180vh;
     transform: translateY(-50%);
-    border-radius: 0 100% 100% 0 / 0 50% 50% 0;
-    background: linear-gradient(100deg,
-                rgba(9, 16, 30, 0.94) 0%,
-                rgba(8, 13, 26, 0.88) 52%,
-                rgba(6, 10, 20, 0.62) 84%,
-                rgba(6, 10, 20, 0.30) 100%);
-    backdrop-filter: blur(16px) saturate(1.25);
-    -webkit-backdrop-filter: blur(16px) saturate(1.25);
-    border-right: 1px solid rgba(126, 216, 232, 0.22);
-    box-shadow: 26px 0 90px -30px rgba(50, 120, 168, 0.42);
+    border-radius: 0 var(--bow) var(--bow) 0 / 0 50% 50% 0;
+    background: linear-gradient(96deg,
+                rgba(9, 16, 30, 0.95) 0%,
+                rgba(8, 13, 26, 0.90) 60%,
+                rgba(7, 12, 23, 0.72) 88%,
+                rgba(7, 12, 23, 0.44) 100%);
+    backdrop-filter: blur(18px) saturate(1.25);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    border-right: 1px solid rgba(126, 216, 232, 0.20);
+    box-shadow: 30px 0 110px -40px rgba(50, 120, 168, 0.45);
     display: flex; align-items: center;
     z-index: 5;
   }
 
   #panel-inner {
     width: 100%;
-    padding: 0 26% 0 9%;
-    display: flex; flex-direction: column; gap: .68rem;
+    padding: 0 calc(var(--bow) + 2.2rem) 0 2.4rem;
+    display: flex; flex-direction: column; gap: .66rem;
   }
 
   #cover {
     width: 100%; aspect-ratio: 16 / 10; border-radius: 10px;
+    position: relative;
     background:
       radial-gradient(circle at 50% 45%, rgba(126, 216, 232, .34), transparent 62%),
       linear-gradient(150deg, #101d33, #0a1120);
@@ -76,7 +79,54 @@
     font-size: 2rem; color: rgba(126, 216, 232, .55);
     overflow: hidden; flex: none;
   }
-  #cover img { width: 100%; height: 100%; object-fit: cover; }
+  #cover img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity .4s ease;
+  }
+  #cover img.on { opacity: 1; }
+
+  #author { font-size: .76rem; color: var(--text); letter-spacing: .02em; }
+  #author em { font-style: normal; color: var(--text-dim); font-size: .66rem; margin-right: .4rem; }
+
+  /* ── 搜索 ─────────────────────────────────────────── */
+  #search-wrap { position: fixed; left: 2.4rem; top: 1.9rem; z-index: 7; width: min(24rem, 26vw); }
+  #search {
+    width: 100%; padding: .52rem .9rem;
+    background: rgba(8, 14, 26, .82); color: var(--text);
+    border: 1px solid rgba(126, 216, 232, .26); border-radius: 999px;
+    font: inherit; font-size: .76rem; letter-spacing: .03em;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    outline: none; transition: border-color .2s, box-shadow .2s;
+  }
+  #search::placeholder { color: var(--text-dim); }
+  #search:focus {
+    border-color: rgba(126, 216, 232, .6);
+    box-shadow: 0 0 0 3px rgba(126, 216, 232, .10);
+  }
+
+  #results {
+    margin-top: .5rem; max-height: 52vh; overflow-y: auto;
+    background: rgba(7, 12, 23, .93); border: 1px solid rgba(126, 216, 232, .18);
+    border-radius: 12px; display: none;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    scrollbar-width: thin; scrollbar-color: rgba(126,216,232,.3) transparent;
+  }
+  #results.on { display: block; }
+  #results::-webkit-scrollbar { width: 6px; }
+  #results::-webkit-scrollbar-thumb { background: rgba(126,216,232,.3); border-radius: 3px; }
+
+  .hit {
+    padding: .46rem .8rem; cursor: pointer; font-size: .7rem; line-height: 1.4;
+    border-bottom: 1px solid rgba(126, 216, 232, .07);
+  }
+  .hit:last-child { border-bottom: 0; }
+  .hit:hover, .hit.cur { background: rgba(126, 216, 232, .12); }
+  .hit .n { color: var(--text); display: block;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hit .s { color: var(--text-dim); font-size: .62rem; }
+  .hit mark { background: none; color: var(--accent); }
+  #results .none { padding: .6rem .8rem; font-size: .68rem; color: var(--text-dim); }
 
   #title {
     font-size: clamp(.82rem, 1.5vh, 1.02rem); line-height: 1.42; font-weight: 600;
@@ -141,10 +191,11 @@
   }
   #loading.done { opacity: 0; pointer-events: none; }
 
-  @media (max-width: 720px) {
-    :root { --panel-w: 62vw; }
-    #panel { transform: translate(-46%, -50%); }
-    #panel-inner { width: 54%; margin-left: 40%; }
+  @media (max-width: 860px) {
+    :root { --panel-w: 74vw; --bow: 7vw; }
+    #panel-inner { padding: 0 calc(var(--bow) + 1rem) 0 1.3rem; }
+    #search-wrap { left: 1rem; right: 1rem; top: auto; bottom: 1rem; width: auto; }
+    #results { max-height: 38vh; }
     #brand { right: 1.1rem; top: 1.1rem; }
     #hud { display: none; }
   }
@@ -158,8 +209,9 @@
   <div id="panel-inner">
     <div id="empty"><span>十光年的距离</span>5847 首曲目<br>各自对应一颗真实恒星<br>点击任意一颗</div>
     <div id="detail" hidden>
-      <div id="cover">✦</div>
+      <div id="cover"><span>✦</span><img alt="" referrerpolicy="no-referrer"></div>
       <div id="title"></div>
+      <div id="author"></div>
       <div class="rule"></div>
       <div class="meta" id="meta"></div>
       <div id="star-line"></div>
@@ -168,13 +220,19 @@
   </div>
 </div>
 
+<div id="search-wrap">
+  <input id="search" type="search" autocomplete="off" spellcheck="false"
+         placeholder="搜索曲名 / UP 主 / TYC 编号">
+  <div id="results"></div>
+</div>
+
 <div id="brand">
   <h1>十光年的距离</h1>
   <p>STARDUST · 10TH ANNIVERSARY</p>
 </div>
 
 <div id="hud">
-  <div><kbd>拖拽</kbd> 旋转 · <kbd>滚轮</kbd> 推拉 · <kbd>点击</kbd> 选中</div>
+  <div><kbd>拖拽</kbd> 旋转 · <kbd>滚轮</kbd> 推拉 · <kbd>点击</kbd> 选中 · <kbd>/</kbd> 搜索</div>
   <div id="stat"></div>
 </div>
 
