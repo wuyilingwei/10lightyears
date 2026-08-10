@@ -52,13 +52,13 @@
   #leader { stroke-width: 1; stroke-dasharray: 3 4; }
   #ring { stroke-width: 1.4; }
   #ring-glow { stroke-width: 4; }
-  /* 悬停标记：更虚、虚线、略大一圈，与实心的选中标记区分开 */
-  #hover-ring { stroke-width: 1; stroke-dasharray: 2 5; transition: opacity .12s ease; }
+  /* 悬停标记与选中标记同形同尺寸，只是半透明 */
+  #hover-ring { stroke-width: 1.4; transition: opacity .12s ease; }
 
   #link-layer.sel #leader { opacity: .62; }
   #link-layer.sel #ring { opacity: 1; }
   #link-layer.sel #ring-glow { opacity: .16; }
-  #link-layer.hov #hover-ring { opacity: .45; }
+  #link-layer.hov #hover-ring { opacity: .4; }
 
   /* 信息框：选中才出现，浮在星场上 */
   #infobox {
@@ -99,6 +99,37 @@
     opacity: 0; transition: opacity .35s ease;
   }
   #cover iframe.on { opacity: 1; }
+  /* 自动播放时不挂 iframe（否则背景音乐没法响），改用静态封面 */
+  #poster {
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity .45s ease;
+  }
+  #poster.on { opacity: 1; }
+
+  /* ── 自动播放 ─────────────────────────────────────── */
+  #auto-btn {
+    position: fixed; right: 2rem; bottom: 2.4rem; z-index: 8;
+    display: flex; align-items: center; gap: .45rem;
+    padding: .4rem .85rem .4rem .7rem;
+    background: rgba(8, 14, 26, .8); color: var(--text-dim);
+    border: 1px solid rgba(242, 200, 75, .26); border-radius: 999px;
+    font: inherit; font-size: .64rem; letter-spacing: .1em; cursor: pointer;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  #auto-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
+  #auto-btn::before {
+    content: ""; width: .5rem; height: .5rem; border-radius: 50%;
+    background: var(--text-dim); transition: background .25s, box-shadow .25s;
+  }
+  body.auto #auto-btn { color: var(--accent); border-color: rgba(242, 200, 75, .6); }
+  body.auto #auto-btn::before {
+    background: var(--accent); box-shadow: 0 0 10px var(--accent);
+  }
+
+  body.auto #search-wrap, body.auto #footer {
+    opacity: 0; pointer-events: none; transition: opacity .4s ease;
+  }
 
   #title {
     font-size: clamp(.84rem, 1.5vh, 1.04rem); line-height: 1.42; font-weight: 600;
@@ -276,6 +307,8 @@
     #mark { width: 2rem; }
 
     #footer { display: none; }
+    #auto-btn { right: .7rem; bottom: auto; top: 3.4rem; }
+    body.auto #infobox { bottom: .7rem; }
   }
 
   /* 触屏：手势由脚本接管，交给浏览器就会变成滚页面和双指缩放 */
@@ -300,6 +333,7 @@
   <div id="detail">
     <div id="cover">
       <img class="glyph" src="./icon.svg" alt="" width="52" height="52">
+      <img id="poster" alt="" referrerpolicy="no-referrer">
     </div>
     <div id="title"></div>
     <div id="author"></div>
@@ -328,6 +362,9 @@
 </div>
 
 <div id="tooltip"></div>
+
+<button id="auto-btn" type="button">自动巡游</button>
+<audio id="bgm" src="./audio/bgm.m4a" loop preload="none"></audio>
 
 <div id="footer">
   星表 Tycho-2 · Hipparcos<span class="sep">/</span>音频特征 MERT-v1-95M

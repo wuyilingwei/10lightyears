@@ -273,7 +273,11 @@ starGeom.setAttribute("flare", new THREE.BufferAttribute(new Float32Array(N), 1)
 
 const starMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  uniforms: { uScale: { value: 1 }, uGain: { value: 1 }, uShift: { value: 0 } },
+  uniforms: {
+    uScale: { value: 1 }, uGain: { value: 1 },
+    // 相机速度，已除以轨道半径，量纲近似 rad/s
+    uCamVel: { value: new THREE.Vector3() },
+  },
   vertexShader: `
     attribute float size;
     attribute float flare;
@@ -281,11 +285,17 @@ const starMat = new THREE.ShaderMaterial({
     varying vec3 vColor;
     varying float vFlare;
     varying float vGiant;
+    varying float vShift;
     uniform float uScale;
+    uniform vec3 uCamVel;
     void main() {
       vColor = color;
       vFlare = flare;
       vGiant = giant;
+      // 视向相对速度决定这颗星的偏移量：相机朝它去为正（蓝移），离开为负（红移）
+      vec4 world = modelMatrix * vec4(position, 1.0);
+      vec3 toStar = normalize(world.xyz - cameraPosition);
+      vShift = clamp(dot(uCamVel, toStar) / 1.2, -1.0, 1.0);
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
       gl_Position = projectionMatrix * mv;
       float d = max(-mv.z, 0.6);
@@ -296,8 +306,8 @@ const starMat = new THREE.ShaderMaterial({
     varying vec3 vColor;
     varying float vFlare;
     varying float vGiant;
+    varying float vShift;
     uniform float uGain;
-    uniform float uShift;
     void main() {
       vec2 p = gl_PointCoord - 0.5;
       float r = length(p) * 2.0;
@@ -307,8 +317,10 @@ const starMat = new THREE.ShaderMaterial({
       float core = pow(1.0 - r, mix(2.8, 2.1, vGiant));
       float halo = pow(1.0 - r, mix(1.6, 1.0, vGiant)) * (0.18 + vGiant * 0.20);
       vec3 c = mix(vColor, vec3(1.0), core * 0.5 + vFlare * 0.4);
-      // 尾迹的头部是逼近端，压红通道做蓝移；尾段的红移在反馈通道里累积
-      c *= mix(vec3(1.0), vec3(0.845, 0.945, 1.0), uShift);
+      // 逼近的星压红通道（蓝移），退行的星压蓝通道（红移）。
+      // 只压不抬，避免加性混合下过曝。
+      c *= mix(vec3(1.0), vec3(0.80, 0.93, 1.0), max(vShift, 0.0));
+      c *= mix(vec3(1.0), vec3(1.0, 0.90, 0.76), max(-vShift, 0.0));
       gl_FragColor = vec4(c, (core + halo) * (0.88 + vFlare * 1.0) * uGain);
     }`,
 });
@@ -402,20 +414,17 @@ let rtNext = new THREE.WebGLRenderTarget(2, 2, rtOpts);
 
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
-  uniforms: { uTex: { value: null }, uDecay: { value: 0 }, uShift: { value: 0 } },
+  uniforms: { uTex: { value: null }, uDecay: { value: 0 } },
   depthTest: false, depthWrite: false, blending: THREE.NoBlending,
   vertexShader: `
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  // 这里不再统一染色：偏移量已经逐星算过，尾迹自然继承各自的冷暖，
+  // 全局染红会把蓝移那侧的尾巴也一起污染
   fragmentShader: `
-    uniform sampler2D uTex; uniform float uDecay; uniform float uShift;
+    uniform sampler2D uTex; uniform float uDecay;
     varying vec2 vUv;
-    void main() {
-      vec4 c = texture2D(uTex, vUv) * uDecay;
-      // 残影每经过一帧就再红一点，越老的尾段越偏红 —— 退行端的红移
-      c.rgb *= mix(vec3(1.0), vec3(1.0, 0.940, 0.845), uShift);
-      gl_FragColor = c;
-    }`,
+    void main() { gl_FragColor = texture2D(uTex, vUv) * uDecay; }`,
 });
 const quadScene = new THREE.Scene();
 quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat));
@@ -485,6 +494,9 @@ const elLinks = document.getElementById("links");
 const elLinkCount = document.getElementById("link-count");
 const elLinkList = document.getElementById("link-list");
 const elCover = document.getElementById("cover");
+const elPoster = document.getElementById("poster");
+const CDN = meta.cdn || "https://i0.hdslb.com/";
+const COVER_VARIANT = "@640w_400h_1c.webp";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 
@@ -517,7 +529,21 @@ function select(i) {
   infobox.classList.add("on");
   elTitle.textContent = t.t;
 
-  mountPlayer(i);
+  // 巡游时用静态封面：挂 iframe 会和背景音乐抢声道，也白白拉一堆请求
+  if (auto.on) {
+    stopPlayer();
+    elPoster.classList.remove("on");
+    if (t.c) {
+      elPoster.onload = () => elPoster.classList.add("on");
+      elPoster.src = CDN + t.c + COVER_VARIANT;
+    } else {
+      elPoster.removeAttribute("src");
+    }
+  } else {
+    elPoster.classList.remove("on");
+    elPoster.removeAttribute("src");
+    mountPlayer(i);
+  }
 
   elAuthor.innerHTML = t.a
     ? `<em>UP 主</em>${escapeHtml(t.a)}`
@@ -582,11 +608,11 @@ function hexPoints(cx, cy, r) {
 }
 
 function updateMarker() {
-  // 悬停标记独立于选中：只要指针停在某颗星上就画，选中的那颗不重复画
+  // 悬停标记与选中标记同形同尺寸，只靠透明度区分；选中的那颗不重复画
   const showHover = hovered >= 0 && hovered !== selected && visible[hovered];
   if (showHover) {
     elHoverRing.setAttribute("points", hexPoints(
-      projected[hovered * 2], projected[hovered * 2 + 1], RING_R * 1.18));
+      projected[hovered * 2], projected[hovered * 2 + 1], RING_R));
   }
   linkLayer.classList.toggle("hov", showHover);
 
@@ -647,6 +673,112 @@ function mountPlayer(i) {
   frame.addEventListener("load", () => frame.classList.add("on"));
   elCover.appendChild(frame);
 }
+
+/* ── 自动巡游 ───────────────────────────────────────
+   两类动作轮换：聚焦某颗星（10s）、或在一定范围内随机移动/旋转（5-10s）。
+   连续聚焦时有 25% 概率跳到相近曲目，让巡游沿着曲风网络走一段。 */
+const autoBtn = document.getElementById("auto-btn");
+const bgm = document.getElementById("bgm");
+
+const auto = {
+  on: false, t0: 0, t1: 0, lastWasSelect: false,
+  from: null, to: null,
+};
+const FIELD_R = 26;   // 随机目标点的活动半径，场景单位
+
+const rnd = (a, b) => a + Math.random() * (b - a);
+const easeInOut = (u) => u * u * (3 - 2 * u);
+
+function snapshotCam() {
+  return {
+    theta: cam.goalTheta, phi: cam.goalPhi, radius: cam.goalRadius,
+    target: cam.goalTarget.clone(),
+  };
+}
+
+function focusStar(i, seconds) {
+  select(i);
+  const to = snapshotCam();
+  to.target.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+  to.radius = rnd(14, 34);
+  to.theta = cam.goalTheta + rnd(-0.9, 0.9);
+  to.phi = THREE.MathUtils.clamp(cam.goalPhi + rnd(-0.3, 0.3), 0.35, Math.PI - 0.35);
+  return { to, seconds };
+}
+
+function nextAction() {
+  const now = performance.now();
+  auto.from = snapshotCam();
+
+  // 上一步是聚焦时，有 25% 概率沿相近曲目走
+  let plan;
+  if (auto.lastWasSelect && selected >= 0 && Math.random() < 0.25
+      && neighbours[selected].length) {
+    const e = neighbours[selected][(Math.random() * neighbours[selected].length) | 0];
+    const other = edgeIdx[e * 2] === selected ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2];
+    plan = focusStar(other, 10);
+    auto.lastWasSelect = true;
+  } else if (Math.random() < 0.55) {
+    plan = focusStar((Math.random() * N) | 0, 10);
+    auto.lastWasSelect = true;
+  } else {
+    // 移动 / 旋转 / 两者兼有，外加偶尔一次退到远景
+    const to = snapshotCam();
+    const mode = Math.random();
+    const wide = Math.random() < 0.18;
+    if (mode < 0.66) {                       // 含移动
+      to.target.set(rnd(-FIELD_R, FIELD_R), rnd(-FIELD_R * 0.4, FIELD_R * 0.4),
+                    rnd(-FIELD_R, FIELD_R));
+    }
+    if (mode > 0.33) {                       // 含旋转
+      to.theta = cam.goalTheta + rnd(-1.6, 1.6);
+      to.phi = THREE.MathUtils.clamp(cam.goalPhi + rnd(-0.5, 0.5), 0.3, Math.PI - 0.3);
+    }
+    to.radius = wide ? rnd(150, 260) : rnd(20, 90);
+    plan = { to, seconds: rnd(5, 10) };
+    auto.lastWasSelect = false;
+  }
+
+  auto.to = plan.to;
+  auto.t0 = now;
+  auto.t1 = now + plan.seconds * 1000;
+}
+
+function stepAuto() {
+  if (!auto.on) return;
+  const now = performance.now();
+  if (!auto.to || now >= auto.t1) { nextAction(); return; }
+  const u = easeInOut(THREE.MathUtils.clamp((now - auto.t0) / (auto.t1 - auto.t0), 0, 1));
+  const f = auto.from, t = auto.to;
+  cam.goalTheta = f.theta + (t.theta - f.theta) * u;
+  cam.goalPhi = f.phi + (t.phi - f.phi) * u;
+  cam.goalRadius = f.radius + (t.radius - f.radius) * u;
+  cam.goalTarget.lerpVectors(f.target, t.target, u);
+}
+
+function setAuto(on) {
+  if (auto.on === on) return;
+  auto.on = on;
+  document.body.classList.toggle("auto", on);
+  autoBtn.textContent = on ? "退出巡游" : "自动巡游";
+  if (on) {
+    auto.to = null;
+    auto.lastWasSelect = false;
+    bgm.volume = 0.55;
+    bgm.play().catch(() => {});    // 自动播放被拦就静默跳过
+    if (selected >= 0) select(selected);   // 换成静态封面
+  } else {
+    bgm.pause();
+    if (selected >= 0) select(selected);   // 换回播放器
+  }
+}
+
+autoBtn.addEventListener("click", () => setAuto(!auto.on));
+// 任何主动操作都退出巡游
+for (const ev of ["pointerdown", "wheel"]) {
+  canvas.addEventListener(ev, () => setAuto(false), { passive: true });
+}
+addEventListener("keydown", (e) => { if (PAN_KEYS[e.code]) setAuto(false); });
 
 /* ── 搜索 ───────────────────────────────────────────── */
 function escapeHtml(s) {
@@ -746,21 +878,27 @@ resize();
 let prev = performance.now();
 let decay = 0;
 const lastCamPos = new THREE.Vector3();
+const camVel = new THREE.Vector3();
 
 function frame(now) {
   // 下界不能省：dt 为负会让下面的 pow 指数翻转，平滑系数变成负数，decay 发散
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
-  if (!dragging && held.size === 0) cam.goalTheta += dt * 0.012;   // 缓慢自转
+  stepAuto();
+  if (!dragging && held.size === 0 && !auto.on) cam.goalTheta += dt * 0.012;  // 缓慢自转
   pan(dt);
   applyCamera(dt);
   project();
   updateMarker();
 
-  // 位移除以轨道半径 -> 角速度，与场景尺度无关，推拉和旋转都能算进去
-  const speed = lastCamPos.distanceTo(camera.position)
-              / Math.max(dt, 1e-3) / Math.max(cam.radius, 1);
+  // 位移除以轨道半径 -> 角速度，与场景尺度无关，推拉和旋转都能算进去。
+  // 同一个位移量再作为速度矢量喂给着色器，用于逐星的视向多普勒偏移。
+  camVel.subVectors(camera.position, lastCamPos)
+        .divideScalar(Math.max(dt, 1e-3) * Math.max(cam.radius, 1));
+  const speed = camVel.length();
   lastCamPos.copy(camera.position);
+  starMat.uniforms.uCamVel.value.copy(camVel);
+
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
     TRAIL_K * Math.pow(excess, TRAIL_EXP), 0, TRAIL_MAX);
@@ -770,15 +908,12 @@ function frame(now) {
   // 上一帧衰减后写入 rtNext，场景以 (1-decay) 的增益叠加其上
   renderer.setRenderTarget(rtNext);
   renderer.clear(true, true, true);
-  const shift = decay / TRAIL_MAX;
   quadMat.uniforms.uTex.value = rtPrev.texture;
   quadMat.uniforms.uDecay.value = decay;
-  quadMat.uniforms.uShift.value = shift;
   renderer.render(quadScene, quadCam);
   // 严格能量守恒（gain = 1-decay）会把尾巴压到看不见；留一部分累积，
   // 让星点在移动时拉出更亮的光迹，静止时 decay=0 自动回到原亮度
   setGain(1 - decay * 0.7);
-  starMat.uniforms.uShift.value = shift;
   renderer.render(scene, camera);
 
   renderer.setRenderTarget(null);
