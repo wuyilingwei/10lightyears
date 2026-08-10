@@ -69,6 +69,7 @@ canvas.addEventListener("pointerdown", (e) => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: 0, type: e.pointerType });
   dragging = true;
   resetPinch();
+  clearHover();                 // 拖拽期间不更新悬停，留着会是个跟错星的虚框
   elResults.classList.remove("on");
 });
 
@@ -454,6 +455,12 @@ function nearest(x, y, maxDist) {
 }
 
 const tooltip = document.getElementById("tooltip");
+
+function clearHover() {
+  hovered = -1;
+  tooltip.style.opacity = "0";
+}
+
 function hover(x, y) {
   const i = nearest(x, y, 15);
   if (i === hovered) {
@@ -492,7 +499,7 @@ function select(i) {
   selected = i;
   if (i < 0) {
     infobox.classList.remove("on");
-    linkLayer.classList.remove("on");
+    linkLayer.classList.remove("sel");
     flare.needsUpdate = true; edgeGeom.getAttribute("alpha").needsUpdate = true;
     return;
   }
@@ -559,6 +566,7 @@ const linkLayer = document.getElementById("link-layer");
 const elLeader = document.getElementById("leader");
 const elRing = document.getElementById("ring");
 const elRingGlow = document.getElementById("ring-glow");
+const elHoverRing = document.getElementById("hover-ring");
 const RING_R = parseFloat(
   getComputedStyle(document.documentElement).getPropertyValue("--ring-r")) || 19;
 
@@ -574,8 +582,16 @@ function hexPoints(cx, cy, r) {
 }
 
 function updateMarker() {
+  // 悬停标记独立于选中：只要指针停在某颗星上就画，选中的那颗不重复画
+  const showHover = hovered >= 0 && hovered !== selected && visible[hovered];
+  if (showHover) {
+    elHoverRing.setAttribute("points", hexPoints(
+      projected[hovered * 2], projected[hovered * 2 + 1], RING_R * 1.18));
+  }
+  linkLayer.classList.toggle("hov", showHover);
+
   if (selected < 0 || !visible[selected]) {
-    linkLayer.classList.remove("on");
+    linkLayer.classList.remove("sel");
     return;
   }
   const sx = projected[selected * 2], sy = projected[selected * 2 + 1];
@@ -604,7 +620,7 @@ function updateMarker() {
     : `M${ax.toFixed(1)},${ay.toFixed(1)} L${ax.toFixed(1)},${(ay + (ey - ay) * 0.45).toFixed(1)} `
       + `L${ex.toFixed(1)},${ey.toFixed(1)}`;
   elLeader.setAttribute("d", d);
-  linkLayer.classList.add("on");
+  linkLayer.classList.add("sel");
 }
 
 /* ── 内嵌播放器 ─────────────────────────────────────── */

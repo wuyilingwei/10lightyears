@@ -39,18 +39,26 @@
       var(--ink);
   }
 
-  /* 连线层：屏幕空间 SVG，把信息框接到选中星 */
+  /* 连线层：屏幕空间 SVG，承载引线、选中标记与悬停标记 */
   /* SVG 是替换元素，固有尺寸 300x150，inset:0 撑不开它，必须显式给宽高 */
   #link-layer {
     position: fixed; inset: 0; width: 100%; height: 100%;
     z-index: 5; pointer-events: none;
-    opacity: 0; transition: opacity .3s ease;
   }
-  #link-layer.on { opacity: 1; }
-  #leader { fill: none; stroke: var(--accent); stroke-width: 1;
-            stroke-dasharray: 3 4; opacity: .62; }
-  #ring { fill: none; stroke: var(--accent); stroke-width: 1.4; }
-  #ring-glow { fill: none; stroke: var(--accent); stroke-width: 4; opacity: .16; }
+  #leader, #ring, #ring-glow, #hover-ring {
+    fill: none; stroke: var(--accent); opacity: 0;
+    transition: opacity .24s ease;
+  }
+  #leader { stroke-width: 1; stroke-dasharray: 3 4; }
+  #ring { stroke-width: 1.4; }
+  #ring-glow { stroke-width: 4; }
+  /* 悬停标记：更虚、虚线、略大一圈，与实心的选中标记区分开 */
+  #hover-ring { stroke-width: 1; stroke-dasharray: 2 5; transition: opacity .12s ease; }
+
+  #link-layer.sel #leader { opacity: .62; }
+  #link-layer.sel #ring { opacity: 1; }
+  #link-layer.sel #ring-glow { opacity: .16; }
+  #link-layer.hov #hover-ring { opacity: .45; }
 
   /* 信息框：选中才出现，浮在星场上 */
   #infobox {
@@ -285,6 +293,7 @@
   <path id="leader"></path>
   <polygon id="ring-glow"></polygon>
   <polygon id="ring"></polygon>
+  <polygon id="hover-ring"></polygon>
 </svg>
 
 <div id="infobox">
