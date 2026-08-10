@@ -494,9 +494,6 @@ const elLinks = document.getElementById("links");
 const elLinkCount = document.getElementById("link-count");
 const elLinkList = document.getElementById("link-list");
 const elCover = document.getElementById("cover");
-const elPoster = document.getElementById("poster");
-const CDN = meta.cdn || "https://i0.hdslb.com/";
-const COVER_VARIANT = "@640w_400h_1c.webp";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 
@@ -529,21 +526,9 @@ function select(i) {
   infobox.classList.add("on");
   elTitle.textContent = t.t;
 
-  // 巡游时用静态封面：挂 iframe 会和背景音乐抢声道，也白白拉一堆请求
-  if (auto.on) {
-    stopPlayer();
-    elPoster.classList.remove("on");
-    if (t.c) {
-      elPoster.onload = () => elPoster.classList.add("on");
-      elPoster.src = CDN + t.c + COVER_VARIANT;
-    } else {
-      elPoster.removeAttribute("src");
-    }
-  } else {
-    elPoster.classList.remove("on");
-    elPoster.removeAttribute("src");
-    mountPlayer(i);
-  }
+  // 巡游时照常挂播放器，靠 autoplay=0 让它停在首帧、不出声，
+  // 于是背景音乐可以一直放
+  mountPlayer(i);
 
   elAuthor.innerHTML = t.a
     ? `<em>UP 主</em>${escapeHtml(t.a)}`
@@ -722,7 +707,9 @@ function nextAction() {
     plan = focusStar((Math.random() * N) | 0, 10);
     auto.lastWasSelect = true;
   } else {
-    // 移动 / 旋转 / 两者兼有，外加偶尔一次退到远景
+    // 移动 / 旋转 / 两者兼有，外加偶尔一次退到远景。
+    // 纯运镜段不留选中：信息框和引线挂着不动会显得镜头脱节
+    select(-1);
     const to = snapshotCam();
     const mode = Math.random();
     const wide = Math.random() < 0.18;
@@ -766,10 +753,8 @@ function setAuto(on) {
     auto.lastWasSelect = false;
     bgm.volume = 0.55;
     bgm.play().catch(() => {});    // 自动播放被拦就静默跳过
-    if (selected >= 0) select(selected);   // 换成静态封面
   } else {
     bgm.pause();
-    if (selected >= 0) select(selected);   // 换回播放器
   }
 }
 
