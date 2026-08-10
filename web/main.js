@@ -303,7 +303,9 @@ const elAuthor = document.getElementById("author");
 const elMeta = document.getElementById("meta");
 const elStar = document.getElementById("star-line");
 const elOpen = document.getElementById("open");
+const elCover = document.getElementById("cover");
 const elCoverImg = document.querySelector("#cover img");
+const elPlay = document.getElementById("play");
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const CDN = meta.cdn || "https://i0.hdslb.com/";
@@ -311,6 +313,7 @@ const CDN = meta.cdn || "https://i0.hdslb.com/";
 const COVER_VARIANT = "@480w_300h_1c.webp";
 
 function select(i) {
+  stopPlayer();
   if (selected >= 0) {
     flare.array[selected] = 0;
     for (const e of neighbours[selected]) {
@@ -365,6 +368,32 @@ function pick(x, y, focus) {
   if (i >= 0) select(i);
   else if (focus) { select(-1); cam.goalTarget.set(0, 0, 0); }
 }
+
+/* ── 内嵌播放器 ─────────────────────────────────────── */
+function stopPlayer() {
+  elCover.classList.remove("playing");
+  elCover.querySelector("iframe")?.remove();
+}
+
+function startPlayer(i) {
+  const t = tracks[i];
+  if (!t) return;
+  stopPlayer();
+  const frame = document.createElement("iframe");
+  const q = new URLSearchParams({
+    isOutside: "true", bvid: t.b, cid: String(t.i), p: String(t.p),
+    autoplay: "1", danmaku: "0", high_quality: "1",
+  });
+  frame.src = `https://player.bilibili.com/player.html?${q}`;
+  frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+  frame.allowFullscreen = true;
+  frame.scrolling = "no";
+  frame.referrerPolicy = "no-referrer";
+  elCover.appendChild(frame);
+  elCover.classList.add("playing");
+}
+
+elPlay.addEventListener("click", () => { if (selected >= 0) startPlayer(selected); });
 
 /* ── 搜索 ───────────────────────────────────────────── */
 function escapeHtml(s) {

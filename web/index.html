@@ -15,7 +15,7 @@
     --accent-warm: #f0c98a;
     --text: #dfe8f2;
     --text-dim: #8497ad;
-    --panel-w: min(27rem, 30vw);
+    --panel-w: min(31rem, 34vw);
     --bow: 3.4vw;   /* 弧的凸出深度，相对 180vh 的高度极小 -> 巨圆 */
   }
 
@@ -64,7 +64,7 @@
 
   #panel-inner {
     width: 100%;
-    padding: 0 calc(var(--bow) + 2.2rem) 0 2.4rem;
+    padding: 0 calc(var(--bow) + 1.3rem) 0 2.2rem;
     display: flex; flex-direction: column; gap: .66rem;
   }
 
@@ -85,6 +85,26 @@
     opacity: 0; transition: opacity .4s ease;
   }
   #cover img.on { opacity: 1; }
+  #cover.playing > span, #cover.playing > img, #cover.playing > #play { display: none; }
+  #cover iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+  /* 点击封面才载入播放器，避免每次选星都拉一个 iframe */
+  #play {
+    position: absolute; inset: 0; z-index: 2; cursor: pointer;
+    border: 0; background: transparent; display: grid; place-items: center;
+    transition: background .25s ease;
+  }
+  #play:hover { background: rgba(4, 9, 18, .34); }
+  #play::after {
+    content: ""; width: 2.6rem; height: 2.6rem; border-radius: 50%;
+    background: rgba(8, 14, 26, .74) url("data:image/svg+xml,\
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237ed8e8'>\
+<path d='M9 6.5v11l9-5.5z'/></svg>") center/1.5rem no-repeat;
+    border: 1px solid rgba(126, 216, 232, .5);
+    box-shadow: 0 0 22px rgba(126, 216, 232, .28);
+    transition: transform .2s ease;
+  }
+  #play:hover::after { transform: scale(1.09); }
 
   #author { font-size: .76rem; color: var(--text); letter-spacing: .02em; }
   #author em { font-style: normal; color: var(--text-dim); font-size: .66rem; margin-right: .4rem; }
@@ -209,7 +229,11 @@
   <div id="panel-inner">
     <div id="empty"><span>十光年的距离</span>5847 首曲目<br>各自对应一颗真实恒星<br>点击任意一颗</div>
     <div id="detail" hidden>
-      <div id="cover"><span>✦</span><img alt="" referrerpolicy="no-referrer"></div>
+      <div id="cover">
+        <span>✦</span>
+        <img alt="" referrerpolicy="no-referrer">
+        <button id="play" type="button" aria-label="播放"></button>
+      </div>
       <div id="title"></div>
       <div id="author"></div>
       <div class="rule"></div>

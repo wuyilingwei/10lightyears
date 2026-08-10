@@ -54,11 +54,11 @@ def main():
     tracks = [
         {"t": t, "b": b, "p": int(p), "u": str(u), "d": d, "v": int(v),
          "s": s, "l": round(float(ly), 1), "m": round(float(m), 2),
-         "a": a, "c": c, "y": y}
-        for t, b, p, u, d, v, s, ly, m, a, c, y in zip(
+         "a": a, "c": c, "y": y, "i": int(cid)}
+        for t, b, p, u, d, v, s, ly, m, a, c, y, cid in zip(
             stars.title, stars.bv_id, stars.page, stars.uid, stars.date,
             stars.n_view, stars.tyc2_id, stars.dist_ly, stars.vt_mag,
-            author, cover, sp)
+            author, cover, sp, stars.cid)
     ]
     manifest = {
         "count": len(stars),
