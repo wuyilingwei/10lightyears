@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>十光年的距离</title>
+<meta name="description" content="星尘十周年 · 曲目星图">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>✦</text></svg>">
+<style>
+  :root {
+    --ink: #05070f;
+    --ink-2: #0a0f1d;
+    --line: rgba(126, 216, 232, 0.22);
+    --accent: #7ed8e8;
+    --accent-warm: #f0c98a;
+    --text: #dfe8f2;
+    --text-dim: #8497ad;
+    --panel-w: min(46vh, 33vw);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--ink); color: var(--text);
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #stage { position: fixed; inset: 0; display: block; }
+
+  /* 背景星云：纯 CSS，位于画布之下 */
+  #nebula {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(60vw 48vh at 22% 18%, rgba(64, 108, 168, 0.20), transparent 62%),
+      radial-gradient(52vw 44vh at 82% 76%, rgba(150, 84, 168, 0.16), transparent 64%),
+      radial-gradient(80vw 70vh at 50% 50%, rgba(20, 34, 62, 0.55), transparent 78%),
+      var(--ink);
+  }
+
+  /* ── 左侧半圆叠加层 ───────────────────────────────── */
+  /* 真半圆：直边贴屏幕左缘，弧面朝向星图 */
+  #panel {
+    position: fixed; left: 0; top: 50%;
+    width: var(--panel-w); height: calc(var(--panel-w) * 2);
+    max-height: 96vh;
+    transform: translateY(-50%);
+    border-radius: 0 100% 100% 0 / 0 50% 50% 0;
+    background: linear-gradient(100deg,
+                rgba(9, 16, 30, 0.94) 0%,
+                rgba(8, 13, 26, 0.88) 52%,
+                rgba(6, 10, 20, 0.62) 84%,
+                rgba(6, 10, 20, 0.30) 100%);
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    border-right: 1px solid rgba(126, 216, 232, 0.22);
+    box-shadow: 26px 0 90px -30px rgba(50, 120, 168, 0.42);
+    display: flex; align-items: center;
+    z-index: 5;
+  }
+
+  #panel-inner {
+    width: 100%;
+    padding: 0 26% 0 9%;
+    display: flex; flex-direction: column; gap: .68rem;
+  }
+
+  #cover {
+    width: 100%; aspect-ratio: 16 / 10; border-radius: 10px;
+    background:
+      radial-gradient(circle at 50% 45%, rgba(126, 216, 232, .34), transparent 62%),
+      linear-gradient(150deg, #101d33, #0a1120);
+    border: 1px solid rgba(126, 216, 232, .20);
+    display: grid; place-items: center;
+    font-size: 2rem; color: rgba(126, 216, 232, .55);
+    overflow: hidden; flex: none;
+  }
+  #cover img { width: 100%; height: 100%; object-fit: cover; }
+
+  #title {
+    font-size: clamp(.82rem, 1.5vh, 1.02rem); line-height: 1.42; font-weight: 600;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .meta { font-size: clamp(.62rem, 1.06vh, .74rem); color: var(--text-dim); line-height: 1.7; }
+  .meta b { color: var(--accent); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  .rule {
+    height: 1px; flex: none;
+    background: linear-gradient(90deg, transparent, rgba(126,216,232,.34), transparent);
+  }
+
+  #star-line { font-size: clamp(.6rem, 1vh, .72rem); color: var(--accent-warm); letter-spacing: .02em; }
+
+  #open {
+    display: inline-block; margin-top: .1rem; padding: .34rem .8rem;
+    font-size: .68rem; letter-spacing: .06em; text-decoration: none;
+    color: var(--accent); border: 1px solid rgba(126,216,232,.35); border-radius: 999px;
+    transition: background .2s, color .2s;
+  }
+  #open:hover { background: rgba(126,216,232,.14); color: #fff; }
+
+  #empty { color: var(--text-dim); font-size: .78rem; line-height: 2.1; letter-spacing: .1em; }
+  #empty span { display: block; color: var(--accent); font-size: 1.02rem; letter-spacing: .2em; }
+
+  /* ── 角落信息 ─────────────────────────────────────── */
+  #brand {
+    position: fixed; right: 2rem; top: 1.7rem; text-align: right; z-index: 5;
+    pointer-events: none;
+  }
+  #brand h1 {
+    margin: 0; font-size: clamp(1.1rem, 2.4vh, 1.7rem); font-weight: 300;
+    letter-spacing: .34em; color: #eaf4fb;
+    text-shadow: 0 0 26px rgba(126,216,232,.45);
+  }
+  #brand p { margin: .42rem 0 0; font-size: .62rem; letter-spacing: .22em; color: var(--text-dim); }
+
+  #hud {
+    position: fixed; right: 2rem; bottom: 1.6rem; text-align: right; z-index: 5;
+    font-size: .6rem; letter-spacing: .1em; color: var(--text-dim); line-height: 1.9;
+  }
+  #hud kbd {
+    font: inherit; padding: .06rem .34rem; border: 1px solid rgba(126,216,232,.22);
+    border-radius: 4px; color: var(--accent);
+  }
+
+  #tooltip {
+    position: fixed; z-index: 8; pointer-events: none; opacity: 0;
+    max-width: 21rem; padding: .38rem .62rem;
+    background: rgba(6, 11, 22, .93); border: 1px solid rgba(126,216,232,.26);
+    border-radius: 7px; font-size: .68rem; line-height: 1.45;
+    transition: opacity .13s ease;
+  }
+
+  #loading {
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
+    background: var(--ink); transition: opacity .7s ease;
+    letter-spacing: .3em; font-size: .7rem; color: var(--text-dim);
+  }
+  #loading.done { opacity: 0; pointer-events: none; }
+
+  @media (max-width: 720px) {
+    :root { --panel-w: 62vw; }
+    #panel { transform: translate(-46%, -50%); }
+    #panel-inner { width: 54%; margin-left: 40%; }
+    #brand { right: 1.1rem; top: 1.1rem; }
+    #hud { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="nebula"></div>
+<canvas id="stage"></canvas>
+
+<div id="panel">
+  <div id="panel-inner">
+    <div id="empty"><span>十光年的距离</span>5847 首曲目<br>各自对应一颗真实恒星<br>点击任意一颗</div>
+    <div id="detail" hidden>
+      <div id="cover">✦</div>
+      <div id="title"></div>
+      <div class="rule"></div>
+      <div class="meta" id="meta"></div>
+      <div id="star-line"></div>
+      <a id="open" target="_blank" rel="noopener">前往 BILIBILI</a>
+    </div>
+  </div>
+</div>
+
+<div id="brand">
+  <h1>十光年的距离</h1>
+  <p>STARDUST · 10TH ANNIVERSARY</p>
+</div>
+
+<div id="hud">
+  <div><kbd>拖拽</kbd> 旋转 · <kbd>滚轮</kbd> 推拉 · <kbd>点击</kbd> 选中</div>
+  <div id="stat"></div>
+</div>
+
+<div id="tooltip"></div>
+<div id="loading">载入星表…</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>

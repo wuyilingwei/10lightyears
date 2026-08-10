@@ -26,6 +26,20 @@ TAP = "https://tapvizier.cds.unistra.fr/TAPVizieR/tap/sync"
 PC_TO_LY = 3.261563777
 VT_LIMIT = 7.0  # upstream star set is naked-eye bright; one bulk pull covers it
 
+# Exponentially-decreasing-space-density prior (Bailer-Jones 2015). Inverting a
+# low signal-to-noise parallax yields non-physical distances -- the worst entry
+# here lands at 326000 ly -- so distances come from the posterior mode instead.
+# The scale is fitted to the well-measured subset by fit_prior_length().
+EDSD_FALLBACK_PC = 200.0
+
+# ICRS -> Galactic rotation (ESA 1997). Puts the disc in the XY plane, which is
+# what makes the rendered field read as the Milky Way rather than a tilted band.
+ICRS_TO_GALACTIC = np.array([
+    [-0.0548755604162154, -0.8734370902348850, -0.4838350155487132],
+    [+0.4941094278755837, -0.4448296299600112, +0.7469822444972189],
+    [-0.8676661490190047, -0.1980763734312015, +0.4559837761750669],
+])
+
 TYC2_COLS = (
     'TYC1,TYC2,TYC3,RAmdeg,DEmdeg,"RA(ICRS)" AS RAobs,"DE(ICRS)" AS DEobs,'
     "VTmag,BTmag,pmRA,pmDE,prox,HIP"
@@ -89,6 +103,50 @@ def fetch_parallax(hip_ids):
     return cached("hip2_parallax.csv", build)
 
 
+def fit_prior_length(dist_pc, quality):
+    """Scale the prior so its mode (at 2L) sits on the mode of the trustworthy
+    distances, leaving well-measured stars essentially untouched."""
+    good = dist_pc[(quality == "good") & dist_pc.notna() & (dist_pc > 0)]
+    if len(good) < 100:
+        return EDSD_FALLBACK_PC
+    counts, edges = np.histogram(np.log10(good), bins=40)
+    peak = 10 ** ((edges[counts.argmax()] + edges[counts.argmax() + 1]) / 2)
+    return float(peak / 2)
+
+
+def edsd_distance(plx_mas, e_plx_mas, length_pc):
+    """Posterior mode of r under the EDSD prior, in parsec.
+
+    Root of  r^3/L - 2r^2 + (w/s^2) r - 1/s^2 = 0  with w, s in arcsec.
+    Where the parallax is informative this returns 1/w; where it is not, it
+    decays to the prior mode instead of diverging.
+    """
+    out = np.full(len(plx_mas), np.nan)
+    w = plx_mas.to_numpy(dtype=float) / 1000.0
+    s = e_plx_mas.to_numpy(dtype=float) / 1000.0
+    usable = np.isfinite(w) & np.isfinite(s) & (s > 0)
+    for i in np.flatnonzero(usable):
+        coeffs = [1.0 / length_pc, -2.0, w[i] / s[i] ** 2, -1.0 / s[i] ** 2]
+        roots = np.roots(coeffs)
+        real = roots[np.abs(roots.imag) < 1e-8].real
+        real = real[real > 0]
+        if real.size == 0:
+            continue
+        # two positive roots occur only for informative parallaxes; the smaller
+        # one is the mode, the larger is a spurious tail solution
+        out[i] = real.min() if w[i] > 0 else real.max()
+    return pd.Series(out, index=plx_mas.index)
+
+
+def to_galactic(ux, uy, uz):
+    # Accelerate leaves stale FP flags set; the rotation itself is exact
+    with np.errstate(all="ignore"):
+        gx, gy, gz = ICRS_TO_GALACTIC @ np.vstack([ux, uy, uz])
+    lon = np.degrees(np.arctan2(gy, gx)) % 360.0
+    lat = np.degrees(np.arcsin(np.clip(gz, -1.0, 1.0)))
+    return gx, gy, gz, lon, lat
+
+
 def enrich(src):
     keys = split_tyc(src.tyc2_id)
     src = pd.concat([src, keys], axis=1)
@@ -117,11 +175,19 @@ def enrich(src):
     plx = fetch_parallax(df.HIP)
     df = df.merge(plx, on="HIP", how="left")
     positive = df.Plx > 0
-    dist_pc = pd.Series(np.where(positive, 1000.0 / df.Plx.where(positive), np.nan))
-    dist_ly = dist_pc * PC_TO_LY
+    naive_pc = pd.Series(np.where(positive, 1000.0 / df.Plx.where(positive), np.nan))
     rel_err = df.e_Plx / df.Plx.where(positive)
-    quality = np.where(df.Plx.isna() | ~positive, "none",
-                       np.where(rel_err < 0.2, "good", "poor"))
+    quality = pd.Series(np.where(df.Plx.isna() | ~positive, "none",
+                                 np.where(rel_err < 0.2, "good", "poor")))
+
+    length_pc = fit_prior_length(naive_pc, quality)
+    dist_pc = edsd_distance(df.Plx, df.e_Plx, length_pc)
+    # stars with no parallax at all still need a position: use the prior mode
+    dist_pc = dist_pc.fillna(2 * length_pc)
+    dist_ly = dist_pc * PC_TO_LY
+    print(f"  prior length L = {length_pc:.1f} pc (mode {2 * length_pc * PC_TO_LY:.0f} ly)")
+
+    gx, gy, gz, gl, gb = to_galactic(ux, uy, uz)
 
     page = src.bv_id.str.extract(r"_p(\d+)$")[0]
     out = pd.DataFrame({
@@ -140,15 +206,25 @@ def enrich(src):
         "bt_mag": df.BTmag,
         "bv_color": (df.BTmag - df.VTmag).round(4),
 
+        "gl_deg": gl.round(6),
+        "gb_deg": gb.round(6),
+        "gx": gx.round(9),
+        "gy": gy.round(9),
+        "gz": gz.round(9),
+
         "hip": df.HIP.astype("Int64"),
         "plx_mas": df.Plx,
         "e_plx_mas": df.e_Plx,
         "dist_pc": dist_pc.round(3),
         "dist_ly": dist_ly.round(3),
+        "dist_ly_naive": (naive_pc * PC_TO_LY).round(3),
         "dist_quality": quality,
         "px_ly": (ux * dist_ly).round(4),
         "py_ly": (uy * dist_ly).round(4),
         "pz_ly": (uz * dist_ly).round(4),
+        "gx_ly": (gx * dist_ly).round(4),
+        "gy_ly": (gy * dist_ly).round(4),
+        "gz_ly": (gz * dist_ly).round(4),
 
         "uid": src.uid.astype("Int64"),
         "date": src.date,
@@ -177,7 +253,15 @@ def attach_track_metadata(out):
     merged["date"] = merged.date_m.fillna(merged.date)
     merged["cid"] = merged.cid.astype("Int64")
     merged["token_row"] = merged.token_row.astype("Int64")
-    return merged.drop(columns=["uid_m", "n_view_m", "date_m"])
+    merged = merged.drop(columns=["uid_m", "n_view_m", "date_m"])
+
+    # a handful of tracks were never scraped upstream; they carry no author,
+    # date or view count in either source and are dropped rather than rendered
+    incomplete = merged[["uid", "date", "n_view"]].isna().any(axis=1)
+    if incomplete.any():
+        print(f"  dropping {int(incomplete.sum())} tracks with no author/date/views: "
+              + ", ".join(merged.bv_id[incomplete]))
+    return merged[~incomplete].reset_index(drop=True)
 
 
 def main():
