@@ -249,13 +249,31 @@
   #footer .sep { opacity: .45; margin: 0 .5rem; }
 
   @media (max-width: 860px) {
-    :root { --col-w: min(20rem, 62vw); }
-    #infobox { left: 1.2rem; }
-    #search-wrap { left: 1rem; right: 1rem; top: auto; bottom: 1rem; width: auto; }
-    #results { max-height: 38vh; }
-    #link-list { max-height: 9rem; }
-    #brand { right: 1.1rem; top: 1.1rem; gap: .55rem; }
-    #footer { display: none; }   /* 底部让位给搜索框 */
+    /* 信息框改底部抽屉：竖屏上左侧卡片会挡掉大半个星图 */
+    #infobox {
+      left: .7rem; right: .7rem; bottom: .7rem;
+      top: auto; transform: none; width: auto;
+      max-height: 58vh; overflow-y: auto; overscroll-behavior: contain;
+      padding: .85rem .9rem .95rem;
+    }
+    #cover { aspect-ratio: 16 / 9; }
+    #link-list { max-height: 7.5rem; }
+
+    /* 标题只留标识，否则和搜索框抢同一行的宽度 */
+    #search-wrap { left: .7rem; top: .7rem; width: calc(100% - 4.4rem); }
+    #results { max-height: 42vh; }
+
+    #brand { right: .7rem; top: .7rem; gap: 0; }
+    #brand h1, #brand p { display: none; }
+    #mark { width: 2rem; }
+
+    #footer { display: none; }
+  }
+
+  /* 触屏：手势由脚本接管，交给浏览器就会变成滚页面和双指缩放 */
+  @media (pointer: coarse) {
+    #stage { touch-action: none; }
+    #tooltip { display: none; }
   }
 </style>
 </head>

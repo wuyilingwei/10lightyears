@@ -12,7 +12,9 @@ const TRAIL_K = 0.75;        // 使常规拖拽（约 1.3 rad/s）接近 TRAIL_M
 
 const canvas = document.getElementById("stage");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// 手机上 DPR 常到 3，配上 4x MSAA 和两块半浮点缓冲会直接拖垮帧率
+const coarse = matchMedia("(pointer: coarse)").matches;
+renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.5 : 2));
 renderer.autoClear = false;
 
 const scene = new THREE.Scene();
@@ -22,8 +24,9 @@ const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 20000);
 const cam = {
   target: new THREE.Vector3(),
   goalTarget: new THREE.Vector3(),
-  theta: 0.7, phi: 1.22, radius: 54,
-  goalTheta: 0.7, goalPhi: 1.22, goalRadius: 54,
+  // 起始视距放远，先看到整个盘的形状；场景总尺度约 335 单位
+  theta: 0.7, phi: 1.22, radius: 160,
+  goalTheta: 0.7, goalPhi: 1.22, goalRadius: 160,
   minRadius: 2, maxRadius: 420,
 };
 
@@ -43,31 +46,66 @@ function applyCamera(dt) {
   camera.lookAt(cam.target);
 }
 
-let dragging = false, lastX = 0, lastY = 0, moved = 0;
+/* 指针：单指/左键旋转，双指捏合缩放 + 同向拖动平移。
+   触屏没有滚轮，缩放和平移只能靠手势，否则移动端完全无法推拉。 */
+const pointers = new Map();
+const canHover = matchMedia("(hover: hover)").matches;
+const TAP_SLOP = { mouse: 5, touch: 14, pen: 8 };
+let dragging = false;
+let pinch = null;
+
+function pinchState() {
+  const [a, b] = [...pointers.values()];
+  return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+}
+// 双指数变化时重设基准，否则抬起一指的瞬间会跳一大步
+function resetPinch() { pinch = pointers.size === 2 ? pinchState() : null; }
+
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
 canvas.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0) return;                  // 只有左键参与拖拽
-  dragging = true; moved = 0; lastX = e.clientX; lastY = e.clientY;
+  if (e.pointerType === "mouse" && e.button !== 0) return;   // 只有左键参与
   canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: 0, type: e.pointerType });
+  dragging = true;
+  resetPinch();
+  elResults.classList.remove("on");
 });
-canvas.addEventListener("pointerup", (e) => {
-  if (e.button !== 0) return;
-  dragging = false;
-  canvas.releasePointerCapture(e.pointerId);
-  if (moved < 5) pick(e.clientX, e.clientY, true);
-});
-canvas.addEventListener("pointercancel", () => { dragging = false; });
+
 canvas.addEventListener("pointermove", (e) => {
-  if (dragging) {
-    const dx = e.clientX - lastX, dy = e.clientY - lastY;
-    moved += Math.abs(dx) + Math.abs(dy);
-    lastX = e.clientX; lastY = e.clientY;
+  const p = pointers.get(e.pointerId);
+  if (!p) { if (canHover) hover(e.clientX, e.clientY); return; }
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.moved += Math.abs(dx) + Math.abs(dy);
+  p.x = e.clientX; p.y = e.clientY;
+
+  if (pointers.size === 1) {
     cam.goalTheta -= dx * 0.0042;
     cam.goalPhi = THREE.MathUtils.clamp(cam.goalPhi - dy * 0.0042, 0.04, Math.PI - 0.04);
-  } else {
-    hover(e.clientX, e.clientY);
+  } else if (pointers.size === 2) {
+    const s = pinchState();
+    if (pinch) {
+      if (s.d > 1 && pinch.d > 1) {
+        cam.goalRadius = THREE.MathUtils.clamp(
+          cam.goalRadius * (pinch.d / s.d), cam.minRadius, cam.maxRadius);
+      }
+      panScreen(-(s.mx - pinch.mx), s.my - pinch.my);
+    }
+    pinch = s;
   }
 });
+
+function endPointer(e, tap) {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  pointers.delete(e.pointerId);
+  if (canvas.hasPointerCapture?.(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  dragging = pointers.size > 0;
+  resetPinch();
+  if (tap && p.moved < (TAP_SLOP[p.type] ?? 8)) pick(e.clientX, e.clientY, true);
+}
+canvas.addEventListener("pointerup", (e) => endPointer(e, true));
+canvas.addEventListener("pointercancel", (e) => endPointer(e, false));
 /* WASD 沿当前视角平移，视点不再钉在原点 */
 const held = new Set();
 const PAN_KEYS = { KeyW: "up", KeyS: "down", KeyA: "left", KeyD: "right" };
@@ -89,15 +127,22 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) held.clear();
 });
 
+const panScratch = new THREE.Vector3();
+
+// 沿屏幕平面平移视点。步长随轨道半径缩放，远近手感一致。
+function panScreen(dx, dy) {
+  if (dx === 0 && dy === 0) return;
+  camera.matrixWorld.extractBasis(panRight, panUp, panScratch);
+  cam.goalTarget.addScaledVector(panRight, dx);
+  cam.goalTarget.addScaledVector(panUp, dy);
+}
+
 function pan(dt) {
   if (held.size === 0) return;
-  // 速度随轨道半径缩放，远近手感一致
   const step = cam.radius * 0.9 * dt;
-  camera.matrixWorld.extractBasis(panRight, panUp, new THREE.Vector3());
-  if (held.has("right")) cam.goalTarget.addScaledVector(panRight, step);
-  if (held.has("left")) cam.goalTarget.addScaledVector(panRight, -step);
-  if (held.has("up")) cam.goalTarget.addScaledVector(panUp, step);
-  if (held.has("down")) cam.goalTarget.addScaledVector(panUp, -step);
+  panScreen(
+    (held.has("right") ? step : 0) - (held.has("left") ? step : 0),
+    (held.has("up") ? step : 0) - (held.has("down") ? step : 0));
 }
 
 canvas.addEventListener("wheel", (e) => {
@@ -124,14 +169,21 @@ const SPECTRAL_RAMP = [
   [6.0, 1.000, 0.745, 0.498],  // M0
   [6.9, 1.000, 0.588, 0.314],  // M9
 ];
+// 真实恒星色差本就很弱，直接用会是一片白。绕亮度提饱和，把 O..M 的冷暖拉开。
+const SATURATION = 2.1;
+
 function spectralColor(axis, out) {
   let i = 0;
   while (i < SPECTRAL_RAMP.length - 2 && axis > SPECTRAL_RAMP[i + 1][0]) i++;
   const a = SPECTRAL_RAMP[i], b = SPECTRAL_RAMP[i + 1];
   const t = THREE.MathUtils.clamp((axis - a[0]) / (b[0] - a[0]), 0, 1);
-  out[0] = a[1] + (b[1] - a[1]) * t;
-  out[1] = a[2] + (b[2] - a[2]) * t;
-  out[2] = a[3] + (b[3] - a[3]) * t;
+  const r = a[1] + (b[1] - a[1]) * t;
+  const g = a[2] + (b[2] - a[2]) * t;
+  const bl = a[3] + (b[3] - a[3]) * t;
+  const lum = 0.299 * r + 0.587 * g + 0.114 * bl;
+  out[0] = THREE.MathUtils.clamp(lum + (r - lum) * SATURATION, 0, 1);
+  out[1] = THREE.MathUtils.clamp(lum + (g - lum) * SATURATION, 0, 1);
+  out[2] = THREE.MathUtils.clamp(lum + (bl - lum) * SATURATION, 0, 1);
 }
 
 // 光度级 I..III 是巨星/超巨星，半径大得多，给更宽更软的光晕；IV/V 是矮星
@@ -220,7 +272,7 @@ starGeom.setAttribute("flare", new THREE.BufferAttribute(new Float32Array(N), 1)
 
 const starMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  uniforms: { uScale: { value: 1 }, uGain: { value: 1 } },
+  uniforms: { uScale: { value: 1 }, uGain: { value: 1 }, uShift: { value: 0 } },
   vertexShader: `
     attribute float size;
     attribute float flare;
@@ -244,6 +296,7 @@ const starMat = new THREE.ShaderMaterial({
     varying float vFlare;
     varying float vGiant;
     uniform float uGain;
+    uniform float uShift;
     void main() {
       vec2 p = gl_PointCoord - 0.5;
       float r = length(p) * 2.0;
@@ -253,6 +306,8 @@ const starMat = new THREE.ShaderMaterial({
       float core = pow(1.0 - r, mix(2.8, 2.1, vGiant));
       float halo = pow(1.0 - r, mix(1.6, 1.0, vGiant)) * (0.18 + vGiant * 0.20);
       vec3 c = mix(vColor, vec3(1.0), core * 0.5 + vFlare * 0.4);
+      // 尾迹的头部是逼近端，压红通道做蓝移；尾段的红移在反馈通道里累积
+      c *= mix(vec3(1.0), vec3(0.845, 0.945, 1.0), uShift);
       gl_FragColor = vec4(c, (core + halo) * (0.88 + vFlare * 1.0) * uGain);
     }`,
 });
@@ -338,22 +393,28 @@ scene.add(new THREE.Points(dustGeom, dustMat));
 // 连线会重新出现锯齿，得让目标自己多重采样
 const rtOpts = {
   type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
-  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, samples: 4,
+  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+  samples: coarse ? 2 : 4,
 };
 let rtPrev = new THREE.WebGLRenderTarget(2, 2, rtOpts);
 let rtNext = new THREE.WebGLRenderTarget(2, 2, rtOpts);
 
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
-  uniforms: { uTex: { value: null }, uDecay: { value: 0 } },
+  uniforms: { uTex: { value: null }, uDecay: { value: 0 }, uShift: { value: 0 } },
   depthTest: false, depthWrite: false, blending: THREE.NoBlending,
   vertexShader: `
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
-    uniform sampler2D uTex; uniform float uDecay;
+    uniform sampler2D uTex; uniform float uDecay; uniform float uShift;
     varying vec2 vUv;
-    void main() { gl_FragColor = texture2D(uTex, vUv) * uDecay; }`,
+    void main() {
+      vec4 c = texture2D(uTex, vUv) * uDecay;
+      // 残影每经过一帧就再红一点，越老的尾段越偏红 —— 退行端的红移
+      c.rgb *= mix(vec3(1.0), vec3(1.0, 0.940, 0.845), uShift);
+      gl_FragColor = c;
+    }`,
 });
 const quadScene = new THREE.Scene();
 quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat));
@@ -486,8 +547,9 @@ elLinkList.addEventListener("click", (e) => {
 
 function pick(x, y, focus) {
   const i = nearest(x, y, 16);
+  // 取消选中只清标记，不动镜头 —— 回弹会把用户刚调好的视角冲掉
   if (i >= 0) select(i);
-  else if (focus) { select(-1); cam.goalTarget.set(0, 0, 0); }
+  else if (focus) select(-1);
 }
 
 /* ── 选中标记：平顶正六边形 + 接到信息框的引线 ─────────
@@ -521,17 +583,27 @@ function updateMarker() {
   elRing.setAttribute("points", pts);
   elRingGlow.setAttribute("points", pts);
 
-  // 引线从信息框朝向恒星的那一侧引出，止于六边形边缘
+  // 引线从信息框朝向恒星的那条边引出，止于六边形边缘。
+  // 用射线与矩形求交，桌面端的左侧卡片和移动端的底部抽屉都能自然出线。
   const box = infobox.getBoundingClientRect();
-  const ax = sx > box.left + box.width / 2 ? box.right : box.left;
-  const ay = box.top + box.height / 2;
+  const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+  const vx = sx - cx, vy = sy - cy;
+  const hw = box.width / 2 || 1, hh = box.height / 2 || 1;
+  const t = 1 / Math.max(Math.abs(vx) / hw, Math.abs(vy) / hh, 1e-6);
+  const ax = cx + vx * t, ay = cy + vy * t;
+
   const dx = sx - ax, dy = sy - ay;
   const len = Math.hypot(dx, dy) || 1;
   const ex = sx - (dx / len) * RING_R, ey = sy - (dy / len) * RING_R;
-  // 中途打一个折角，读起来像标注引线而不是直连
-  const mx = ax + (ex - ax) * 0.45;
-  elLeader.setAttribute("d", `M${ax.toFixed(1)},${ay.toFixed(1)} `
-    + `L${mx.toFixed(1)},${ay.toFixed(1)} L${ex.toFixed(1)},${ey.toFixed(1)}`);
+
+  // 折角方向跟着出线的那条边：竖边先横走，横边先竖走
+  const fromVertical = Math.abs(vx) / hw >= Math.abs(vy) / hh;
+  const d = fromVertical
+    ? `M${ax.toFixed(1)},${ay.toFixed(1)} L${(ax + (ex - ax) * 0.45).toFixed(1)},${ay.toFixed(1)} `
+      + `L${ex.toFixed(1)},${ey.toFixed(1)}`
+    : `M${ax.toFixed(1)},${ay.toFixed(1)} L${ax.toFixed(1)},${(ay + (ey - ay) * 0.45).toFixed(1)} `
+      + `L${ex.toFixed(1)},${ey.toFixed(1)}`;
+  elLeader.setAttribute("d", d);
   linkLayer.classList.add("on");
 }
 
@@ -639,7 +711,6 @@ addEventListener("keydown", (e) => {
     e.preventDefault(); elSearch.focus();
   }
 });
-canvas.addEventListener("pointerdown", () => elResults.classList.remove("on"));
 
 /* ── 主循环 ─────────────────────────────────────────── */
 
@@ -683,12 +754,15 @@ function frame(now) {
   // 上一帧衰减后写入 rtNext，场景以 (1-decay) 的增益叠加其上
   renderer.setRenderTarget(rtNext);
   renderer.clear(true, true, true);
+  const shift = decay / TRAIL_MAX;
   quadMat.uniforms.uTex.value = rtPrev.texture;
   quadMat.uniforms.uDecay.value = decay;
+  quadMat.uniforms.uShift.value = shift;
   renderer.render(quadScene, quadCam);
   // 严格能量守恒（gain = 1-decay）会把尾巴压到看不见；留一部分累积，
   // 让星点在移动时拉出更亮的光迹，静止时 decay=0 自动回到原亮度
   setGain(1 - decay * 0.7);
+  starMat.uniforms.uShift.value = shift;
   renderer.render(scene, camera);
 
   renderer.setRenderTarget(null);
