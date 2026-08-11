@@ -755,7 +755,7 @@ starGeom.setAttribute("flare", new THREE.BufferAttribute(new Float32Array(N), 1)
 const starMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   uniforms: {
-    uScale: { value: 1 }, uGain: { value: 1 },
+    uScale: { value: 1 }, uGain: { value: 1 }, uDpr: { value: 1 },
     // 相机速度，已除以轨道半径，量纲近似 rad/s
     uCamVel: { value: new THREE.Vector3() },
   },
@@ -768,6 +768,7 @@ const starMat = new THREE.ShaderMaterial({
     varying float vGiant;
     varying float vShift;
     uniform float uScale;
+    uniform float uDpr;
     uniform vec3 uCamVel;
     void main() {
       vColor = color;
@@ -781,7 +782,10 @@ const starMat = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * mv;
       float d = max(-mv.z, 0.6);
       float s = size * (1.0 + giant * 0.45);
-      gl_PointSize = clamp(s * uScale / d * 26.0, 1.3, 40.0) * (1.0 + flare * 2.0);
+      // gl_PointSize 是设备像素（drawing buffer），先在 CSS 像素量纲下
+      // clamp 出直径上下限，最后再乘 uDpr 换算——不然高 DPR 屏幕上同样的
+      // clamp 上下限会先在设备像素里被夹住，视觉上（CSS 像素）就偏小
+      gl_PointSize = clamp(s * uScale / d * 26.0, 1.3, 40.0) * (1.0 + flare * 2.0) * uDpr;
     }`,
   fragmentShader: `
     varying vec3 vColor;
@@ -2071,6 +2075,7 @@ function resize() {
   camera.updateProjectionMatrix();
   starMat.uniforms.uScale.value = h / 900;
   const dpr = renderer.getPixelRatio();
+  starMat.uniforms.uDpr.value = dpr;
   rtPrev.setSize(w * dpr, h * dpr);
   rtNext.setSize(w * dpr, h * dpr);
   layoutHud();
