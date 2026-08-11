@@ -1141,7 +1141,8 @@ midBtn.addEventListener("pointercancel", () => midRelease(midTouch));
 
 const elTargets = document.getElementById("targets");
 const TARGET_MAX = 8;        // 每侧四个槽位
-const TARGET_SPREAD = 16;    // 槽位在弧上张开的角度
+const TARGET_SPREAD = 16;    // 槽位在弧上张开的角度（R 足够大时用这个）
+const TARGET_GAP = 3;        // 相邻槽位间的最小像素安全间隙
 
 const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   const el = document.createElement("div");
