@@ -2140,7 +2140,7 @@ function updateHud(signedSpeed, dt, angRate, radRateSmooth) {
   ICONS.rcs.classList.toggle("on", eng ? eng === "rcs" : (attRate > 0.04 || turning));
   ICONS.main.classList.toggle("on", eng ? eng === "main"
     : (Math.abs(vt) > 1 || gearErr > 1 || closing));
-  ICONS.auto.classList.toggle("on", auto.on);
+  ICONS.auto.classList.toggle("on", auto.on || auto.assist);
   ICONS.lock.classList.toggle("on", selected >= 0);
   ICONS.rev.classList.toggle("on", eng ? eng === "retro" : (vt < -0.5 || rev));
   const abs = Math.abs(shownSpeed);
