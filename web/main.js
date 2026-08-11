@@ -1135,9 +1135,7 @@ const elCover = document.getElementById("cover");
 
 const fmt = new Intl.NumberFormat("zh-CN");
 
-// quiet：只锁定、不挂播放器（漫游扫描 1-3s 就换一个，iframe 连加载都来不及，
-// 生灭一轮纯属浪费；左侧曲目信息与选中标识照常给）
-function select(i, quiet = false) {
+function select(i) {
   stopPlayer();
   // 任何路径改了选中目标，之前数字键留下的预选都作废
   if (pendingSlot >= 0 && targetSlots[pendingSlot]) {
@@ -1172,10 +1170,10 @@ function select(i, quiet = false) {
   const t = tracks[i];
   elTitle.textContent = t.t;
 
-  // 巡游时照常挂播放器，靠 autoplay=0 让它停在首帧、不出声，
-  // 于是背景音乐可以一直放；静默选中连播放器板一起收起
-  panelRight.classList.toggle("on", !quiet);
-  if (!quiet) mountPlayer(i);
+  // 自动模式（含漫游扫描）也照常挂播放器，靠 autoplay=0 让它停在首帧、
+  // 不出声，于是背景音乐可以一直放
+  panelRight.classList.add("on");
+  mountPlayer(i);
 
   F.author.textContent = t.a || `UID ${t.u}`;
   F.date.textContent = t.d;
@@ -2179,7 +2177,7 @@ function roamScan(now) {
   if (now < auto.scanNext) return;
   const i = scanPick();
   if (i < 0) { auto.scanNext = now + 500; return; }   // 附近没顺路的，稍后再看
-  select(i, true);
+  select(i);
   auto.scan = i;
   auto.scanEnd = now + rnd(SCAN_HOLD[0], SCAN_HOLD[1]) * 1000;
 }
@@ -2982,5 +2980,6 @@ if (!helpSeen) {
 } else {
   throttle.gear = INIT_GEAR;
 }
+
 
 
