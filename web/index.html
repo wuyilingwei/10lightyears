@@ -85,6 +85,8 @@
                   stroke-width: 1.6; }
   #speed-mark { fill: var(--accent); opacity: .9;
                 filter: drop-shadow(0 0 5px rgba(242,200,75,.6)); }
+  /* 空心三角：节流目标档位游标 */
+  #hud .set { fill: none; stroke: var(--accent); stroke-width: 1.4; opacity: .85; }
   #hud.rev #speed-mark { fill: #ff9a6b; filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
 
   #hud-labels {
@@ -500,6 +502,7 @@
   <g id="speed-ticks"></g>
   <line id="speed-zero" class="zero"></line>
   <polygon id="speed-mark"></polygon>
+  <polygon id="speed-set" class="set"></polygon>
   <path id="arc-tgt-l" class="tgt-arc"></path>
   <path id="arc-tgt-r" class="tgt-arc"></path>
 </svg>
