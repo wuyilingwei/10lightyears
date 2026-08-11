@@ -18,6 +18,21 @@ fakeLandMq.addEventListener("change", () => {
   document.body.classList.toggle("fake-land", isFakeLand());
 });
 
+// 中心锁定指示器（#lock-dot）的半径要在这里先同步一次，不能等 resize()/
+// updateMarker()：星表数据靠后面一次 await fetch 拉取，await 之前排在
+// 后面的代码（含 resize()/frame() 循环）整段都不会执行——窄屏用户从首帧
+// 到数据下载完这段真实网络耗时里，#lock-dot 只能靠这里写的初值撑着。
+// CSS 断点里也留了一份等效的字面量 r 兜底，但实测这个 SVG 几何属性在
+// 某些选择器形态下 CSS 覆盖不可靠（见 index.html 里 #lock-dot 的注释），
+// 只有内联 style 每次都生效，所以用 JS 在此兜底、其余交给 updateMarker()
+// 接手。
+(() => {
+  const dot = document.getElementById("lock-dot");
+  const scale = parseFloat(
+    getComputedStyle(document.body).getPropertyValue("--reticle-scale")) || 1;
+  dot.style.r = `${(3.5 * scale).toFixed(2)}px`;
+})();
+
 /* 伪横屏提示浮窗：8s 自动淡出，点击立即消失，提示过一次不再弹 */
 function showRotateToast() {
   const toast = document.getElementById("rotate-toast");
@@ -1120,7 +1135,9 @@ const elCover = document.getElementById("cover");
 
 const fmt = new Intl.NumberFormat("zh-CN");
 
-function select(i) {
+// quiet：只锁定、不挂播放器（漫游扫描 1-3s 就换一个，iframe 连加载都来不及，
+// 生灭一轮纯属浪费；左侧曲目信息与选中标识照常给）
+function select(i, quiet = false) {
   stopPlayer();
   // 任何路径改了选中目标，之前数字键留下的预选都作废
   if (pendingSlot >= 0 && targetSlots[pendingSlot]) {
@@ -1153,12 +1170,12 @@ function select(i) {
   edgeGeom.getAttribute("alpha").needsUpdate = true;
 
   const t = tracks[i];
-  panelRight.classList.add("on");
   elTitle.textContent = t.t;
 
   // 巡游时照常挂播放器，靠 autoplay=0 让它停在首帧、不出声，
-  // 于是背景音乐可以一直放
-  mountPlayer(i);
+  // 于是背景音乐可以一直放；静默选中连播放器板一起收起
+  panelRight.classList.toggle("on", !quiet);
+  if (!quiet) mountPlayer(i);
 
   F.author.textContent = t.a || `UID ${t.u}`;
   F.date.textContent = t.d;
@@ -1890,7 +1907,6 @@ const ROAM_ROLL_OFF = [10, 22]; // s，两次横滚之间隔多久
    上限之内，否则"按引擎限制运动"就成了空话。 */
 const ROAM_BOOM = [12, 42];     // su，相机吊臂长度区间
 const ROAM_BOOM_HOLD = [8, 16]; // s，一个吊臂长度维持多久
-const ROAM_BOOM_FAR = 34;       // su，扫描时至少伸到这么长（见下）
 const ROAM_BOOM_RATE = 0.18;    // 吊臂伸缩速率上限占航速的比例
 
 const roam = {
@@ -2043,11 +2059,10 @@ function roamStep(dt, now) {
      航迹在路点处出现折角式急抖。
      另外自动模式以世界 Y 定基，机体实际是绕世界轴整体转，机体角速率 =
      视线扫掠率 / sinφ，所以上限要乘一个 sinφ 才是真的"不超 angMax"。
-     扫描期间再收到三成——用满 30°/s 时机身一秒就能把目标扫出画面，焦点
-     撑不到 3s；少用引擎不算越限。跑到场界外正在掉头时不收，先回来要紧。 */
-  const steady = auto.scan >= 0 && far < ROAM_FIELD * 1.2 ? 0.3 : 1;
+     （扫描期间曾为撑住 3-5s 焦点把转向收到三成；焦点改成 1-3s 后不再需要
+     压制机身，撤掉。） */
   const sinPhi = Math.max(0.6, Math.hypot(roam.fwd.x, roam.fwd.z));
-  const wantTurn = Math.min(rcs.angMax * steady * sinPhi,
+  const wantTurn = Math.min(rcs.angMax * sinPhi,
     Math.sqrt(2 * rcs.angAccel * ang), ang / Math.max(dt, 1e-3));
   roamWant.copy(roamAxis).multiplyScalar(wantTurn).sub(roam.omega);
   const dOmega = rcs.angAccel * dt;
@@ -2083,10 +2098,9 @@ function roamStep(dt, now) {
   }
 
   // 视角拉动：注视点就是轨迹上的点，相机吊在它后面 boom 远处（机位因此
-  // 落在航线上更早的位置）。扫描时把吊臂放长——相机相对那颗星退得慢，
-  // 它能在画面里多留几秒，正好凑够 3-5s 的焦点；扫描结束再收回来
-  const boomTo = auto.scan >= 0 ? Math.max(roam.boomTo, ROAM_BOOM_FAR) : roam.boomTo;
-  const boomErr = boomTo - roam.boom;
+  // 落在航线上更早的位置）。吊臂只按自己的节奏伸缩——曾经在扫描时放长是
+  // 为了给 3-5s 焦点争取时间，焦点改成 1-3s 后没这个必要了
+  const boomErr = roam.boomTo - roam.boom;
   // 收短＝相机比注视点跑得快（上限还远在主引擎前进上限之内，可以放开些）；
   // 放长＝相机跑得慢，得压在上面那条 1/4 判据之内。速率本身也要按 accel
   // 收敛：直接把速率阶跃到上限，等效加速度是主引擎的好几倍，画面会顿一下
@@ -2112,15 +2126,15 @@ function roamStep(dt, now) {
 /* 扫描顺路星体：只锁定展示，不改航线。候选＝落在机头锥角内、距离适中、
    而且此刻真的在画面里的星；焦点 3-5s，一旦转出视野立即取消。 */
 /* 锥角与距离窗一起决定焦点能撑多久：星离轴 θ0、距离 d0，逼近到
-   d ≈ d0·sinθ0/tan(半视场) 时就滑出画面。锥角 9°、距离取"还有 4-8 秒
-   才掠过"，算出来的可见时长正好落在 3-5s 这一档；锥角开大或距离取近，
-   焦点会在 1s 内就被出视野判定掐掉。 */
-const SCAN_COS = Math.cos((6 * Math.PI) / 180);
-const SCAN_LEAD = [5, 10];             // s，候选星距离 = 航速 × 这个区间
-const SCAN_MIN = 60, SCAN_MAX = 150;   // su，航速极低/极高时的距离兜底
-const SCAN_BEST = 5;                   // 只在最贴航向的这几颗里随机挑
-const SCAN_HOLD = [3, 5];              // s，焦点时长
-const SCAN_GAP = [2.5, 6];             // s，两次扫描之间的间隔
+   d ≈ d0·sinθ0/tan(半视场) 时就滑出画面。焦点只要 1-3s，就不必再为了
+   把目标钉在画面里而收窄锥角、把候选推远——锥角开到 12°、候选取"还有
+   2-6 秒才掠过"，候选更多、轮换更快，正是要的快速多目标。 */
+const SCAN_COS = Math.cos((12 * Math.PI) / 180);
+const SCAN_LEAD = [2, 6];              // s，候选星距离 = 航速 × 这个区间
+const SCAN_MIN = 30, SCAN_MAX = 120;   // su，航速极低/极高时的距离兜底
+const SCAN_BEST = 6;                   // 只在最贴航向的这几颗里随机挑
+const SCAN_HOLD = [1, 3];              // s，单个目标的锁定时长
+const SCAN_GAP = [0.4, 1.5];           // s，两次锁定之间的间隔
 
 // visible[] 只判深度，"在画面里"还得看投影落没落进视口
 function inView(i) {
@@ -2163,11 +2177,9 @@ function roamScan(now) {
     return;
   }
   if (now < auto.scanNext) return;
-  // 跑到场界外时不起扫描：那会儿正忙着掉头，收转向只会飞得更远
-  if (roam.pos.length() > ROAM_FIELD) { auto.scanNext = now + 800; return; }
   const i = scanPick();
   if (i < 0) { auto.scanNext = now + 500; return; }   // 附近没顺路的，稍后再看
-  select(i);
+  select(i, true);
   auto.scan = i;
   auto.scanEnd = now + rnd(SCAN_HOLD[0], SCAN_HOLD[1]) * 1000;
 }
@@ -2970,4 +2982,5 @@ if (!helpSeen) {
 } else {
   throttle.gear = INIT_GEAR;
 }
+
 
