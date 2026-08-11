@@ -1195,14 +1195,27 @@ function targetArcR() {
     ? Math.min(base, Math.max(vw() / 2 - 280, 70)) : base;
 }
 
+// 槽位间距只看角度会跟半径脱节：R 被摇杆避让钳制得很小时，角度不变但
+// 弧长（R·Δθ）会小于槽位实际高度，相邻槽位就会重叠。用槽位实际高度反推
+// 不重叠所需的最小张开角，跟设计角度取较大者——R 足够大（桌面）时效果
+// 不变，R 被压缩的触屏窄视口下自动放宽。装饰弧（layoutHud 里的内圈弧）
+// 调这同一个函数取值，两处永远同步、不会再出现"改一处忘一处"。
+function targetSpreadDeg(R) {
+  const half = TARGET_MAX / 2;
+  const slotH = (parseFloat(getComputedStyle(targetSlots[0]).minHeight) || 18) + TARGET_GAP;
+  const minSpread = (((half - 1) * slotH) / R) * (180 / Math.PI);
+  return Math.max(TARGET_SPREAD, minSpread);
+}
+
 // 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
 function layoutTargets() {
   const cx = vw() / 2, cy = vh() / 2;
   const R = targetArcR() + 6;   // 贴在弧的外侧
+  const spread = targetSpreadDeg(R);
   const half = TARGET_MAX / 2;
   targetSlots.forEach((el, k) => {
     const j = k % half;
-    const off = -TARGET_SPREAD / 2 + (TARGET_SPREAD * j) / (half - 1);
+    const off = -spread / 2 + (spread * j) / (half - 1);
     const deg = (k < half ? 180 : 0) + off;
     const a = (deg * Math.PI) / 180;
     el.style.left = `${(cx + R * Math.cos(a)).toFixed(1)}px`;
@@ -1305,6 +1318,11 @@ function hexPoints(cx, cy, r) {
 // 用拖尾同源的 decay 做同步 EMA，decay=0（静止/拖尾关）时无平滑
 const mark = { sx: 0, sy: 0, hx: 0, hy: 0, sel: -1, hov: -1 };
 const elLockDot = document.getElementById("lock-dot");
+// 半径改由 JS 算好直接写数值，不用 CSS calc(var(...)*N)——实测这个引擎下
+// SVG 的 r 属性用 calc() 做乘法不可靠（哪怕是字面量 calc(2.6*3.5) 也会
+// 解析成 3.5，calc() 本身在 width/height 这类常规盒模型属性上没问题，
+// 只在 r 上出问题），JS 直接赋值反而稳妥，跟 cx/cy 本来就是 JS 在管一致
+let lockDotScale = 1;
 
 function updateMarker() {
   const k = 1 - decay;
@@ -1312,6 +1330,7 @@ function updateMarker() {
   // 选中但暂时转出画面时先退回中心，不跟丢
   const locked = selected >= 0 && visible[selected];
   elLockDot.classList.toggle("locked", locked);
+  elLockDot.style.r = `${((locked ? 2.4 : 3.5) * lockDotScale).toFixed(2)}px`;
   if (locked) {
     const lx = mark.sel === selected ? mark.sx : projected[selected * 2];
     const ly = mark.sel === selected ? mark.sy : projected[selected * 2 + 1];
@@ -2068,9 +2087,10 @@ function layoutHud() {
   elSpeed.style.left = `${cx.toFixed(0)}px`;
   elSpeed.style.top = `${(cy + rSpeed + 12).toFixed(0)}px`;
 
-  // 攻击指示器的内圈弧，贴在槽位弧的内侧
+  // 攻击指示器的内圈弧，贴在槽位弧的内侧——张开角用跟 layoutTargets 相同的
+  // targetSpreadDeg()，槽位被迫放宽张角时这条装饰弧跟着放宽，不会脱节
   const rt = targetArcR();
-  const half = TARGET_SPREAD / 2;
+  const half = targetSpreadDeg(rt + 6) / 2;
   arcTgtL.setAttribute("d", arcPath(cx, h / 2, rt, 180 - half, 180 + half));
   arcTgtR.setAttribute("d", arcPath(cx, h / 2, rt, -half, half));
 }
@@ -2162,6 +2182,10 @@ function resize() {
   layoutHud();
   layoutTargets();
   syncSkew();
+  // #reticle 用 CSS 变量 --reticle-scale 缩放没问题（width/height 是常规
+  // 盒模型属性），#lock-dot 的半径改这里读同一个变量再由 JS 直接赋值
+  lockDotScale = parseFloat(
+    getComputedStyle(document.body).getPropertyValue("--reticle-scale")) || 1;
 }
 addEventListener("resize", resize);
 // 伪横屏切换等同一次视口尺寸变化

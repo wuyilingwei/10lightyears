@@ -17,6 +17,10 @@
     --ring-r: 15px;
     --panel-l: 26rem;
     --panel-r: 24rem;
+    /* 中心指示器（准星 #reticle + 锁定指示器 #lock-dot）共用的缩放系数：
+       断点里只改这一个变量，两个元素永远一起变——上一轮只放大了准星、
+       忘了锁定点也要跟着放大，就是因为两处各自维护了一份数值 */
+    --reticle-scale: 1;
     /* rotateY 正角把左缘转近观察者：左板取正让内(右)缘转远，
        透视上内侧显得更窄更远，配合剪影的「内窄上提」 */
     --tilt-l: 8.5deg;
@@ -74,16 +78,25 @@
   }
   #ring-cls { font-weight: 700; }   /* 恒星类型字母，颜色由光谱色内联给出 */
   #link-layer.sel #ring-dist, #link-layer.sel #ring-cls { opacity: .9; }
-  /* 锁定指示器：未选中时暗白守在屏幕正中，选中后移动到目标身上并变亮 */
+  /* 锁定指示器：未选中时暗白守在屏幕正中，选中后移动到目标身上并变亮。
+     半径跟 --reticle-scale 联动、和 #reticle 大小成比例，但 r 属性用
+     calc(var(...)*N) 在测试环境下解析不可靠（width/height 这类常规盒
+     模型属性没问题，只有 r 这样的 SVG 几何属性会出错），改成 JS 在
+     updateMarker() 里读同一个变量后直接算好数值赋值——这里的 r 只是
+     JS 还没跑到第一帧前的初始占位，不用 calc()。 */
   #lock-dot {
-    fill: #fff; opacity: .35;
+    fill: #fff; opacity: .35; r: 3.5;
     transition: cx .3s ease, cy .3s ease, opacity .25s ease, r .25s ease;
   }
-  #lock-dot.locked { opacity: .95; r: 2.4; filter: drop-shadow(0 0 4px rgba(255,255,255,.8)); }
+  #lock-dot.locked {
+    opacity: .95;
+    filter: drop-shadow(0 0 4px rgba(255,255,255,.8));
+  }
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
-    position: fixed; left: 50%; top: 50%; width: 1rem; height: 1rem;
+    position: fixed; left: 50%; top: 50%;
+    width: calc(var(--reticle-scale) * 1rem); height: calc(var(--reticle-scale) * 1rem);
     transform: translate(-50%, -50%);
     z-index: 4; pointer-events: none;
   }
@@ -541,10 +554,9 @@
   }
 
   @media (max-width: 1100px) and (orientation: landscape) {
-    :root { --panel-l: 17rem; --panel-r: 15rem; }
+    :root { --panel-l: 17rem; --panel-r: 15rem; --reticle-scale: 2.6; }
     #panel-left { left: 3vw; }
     #panel-right { right: 3vw; min-height: 11rem; }
-    #reticle { width: 2.6rem; height: 2.6rem; }
     #footer { display: none; }
     #attitude { width: 6.5rem; height: 6.5rem; bottom: .9rem; }
     .target { width: 10rem; }
@@ -554,10 +566,9 @@
 
   /* 伪横屏的窄横屏等价：旋转后的横向宽度即物理高度 */
   @media (max-height: 1100px) {
-    body.fake-land { --panel-l: 17rem; --panel-r: 15rem; }
+    body.fake-land { --panel-l: 17rem; --panel-r: 15rem; --reticle-scale: 2.6; }
     body.fake-land #panel-left { left: 3vh; }
     body.fake-land #panel-right { right: 3vh; min-height: 11rem; }
-    body.fake-land #reticle { width: 2.6rem; height: 2.6rem; }
     body.fake-land #footer { display: none; }
     body.fake-land #attitude { width: 6.5rem; height: 6.5rem; bottom: .9rem; }
     body.fake-land .target { width: 10rem; }
@@ -828,7 +839,7 @@
   <polygon id="hover-ring"></polygon>
   <text id="ring-cls" text-anchor="end"></text>
   <text id="ring-dist"></text>
-  <circle id="lock-dot" r="3.5"></circle>
+  <circle id="lock-dot"></circle>
 </svg>
 
 <svg id="hud" aria-hidden="true">
