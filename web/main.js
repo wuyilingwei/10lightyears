@@ -88,7 +88,7 @@ const ENGINE = {
 };
 // 手动直控增益：只乘在手动路径（姿态角速率/角加速度、节流加减速），自动不乘
 const MANUAL_BOOST = 1.5;
-const vel = { theta: 0, phi: 0, r: 0, pan: 0 };
+const vel = { r: 0, pan: 0 };
 const panDelta = new THREE.Vector3();
 
 // 带加减速的抵达：期望速度取 sqrt(2*a*误差)，于是到点时速度正好归零
@@ -126,15 +126,12 @@ function approachRadial(cur, v, goal, dt) {
 function applyCamera(dt) {
   if (auto.on || auto.assist) {
     const k = 1 - Math.pow(1e-4, dt);
-    const pt = cam.theta, pp = cam.phi, pr = cam.radius;
+    const pr = cam.radius;
     cam.theta += (cam.goalTheta - cam.theta) * k;   // theta 已解缠，可直接插
     cam.phi = THREE.MathUtils.clamp(
       cam.phi + (cam.goalPhi - cam.phi) * k, 0.04, Math.PI - 0.04);
     cam.radius += (cam.goalRadius - cam.radius) * k;
     cam.target.lerp(cam.goalTarget, k);
-    // 隐含速度写回 vel：打断切手动时引擎按制动包络接住动量，而不是一帧骤停
-    vel.theta = (cam.theta - pt) / dt;
-    vel.phi = (cam.phi - pp) / dt;
     vel.r = (cam.radius - pr) / dt;
     vel.pan = 0;
   } else {
@@ -317,6 +314,7 @@ function panScreen(dx, dy) {
 
 // WASD 辅助平移：屏幕上下左右，速率与捏合/摇杆平移同一挡（RCS 平移上限）
 function panKeyStep(dt) {
+  if (auto.on || auto.assist) return;   // 残留按住的键不能在自动/接敌航段里污染 goalTarget
   if (!held.has("panU") && !held.has("panD") && !held.has("panL") && !held.has("panR")) return;
   const step = ENGINE.rcs.panMax * MANUAL_BOOST * dt;
   const dx = (held.has("panR") ? step : 0) - (held.has("panL") ? step : 0);
@@ -979,12 +977,14 @@ function select(i) {
 }
 
 // 开火：手动模式下有锁定目标才接敌，同一套辅助驾驶分段送达
+// 已在接敌中则不再重入——长按/连按 Space 会反复用当前机位重规划航段，永远飞不到
 function fireEngage() {
-  if (selected >= 0 && !auto.on) startAssist(selected);
+  if (selected >= 0 && !auto.on && !auto.assist) startAssist(selected);
 }
 const fireBtn = document.getElementById("fire-btn");
 fireBtn.addEventListener("pointerdown", (e) => {
   e.preventDefault();
+  if (selected < 0) return;   // 没有锁定目标时不该打断巡游/漫游
   setAuto(false);
   fireEngage();
 });
@@ -1809,7 +1809,10 @@ addEventListener("keydown", (e) => {
 // 开火（接敌）、攻击指示器数字键选目标、PageUp/PageDown 循环切换
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
-  if (e.code === "Space") { e.preventDefault(); fireEngage(); return; }
+  if (e.code === "Space") {
+    if (e.target instanceof HTMLButtonElement) return;   // 让聚焦按钮保留原生空格激活
+    e.preventDefault(); fireEngage(); return;
+  }
   if (e.code === "PageUp") { e.preventDefault(); cycleTarget(-1); return; }
   if (e.code === "PageDown") { e.preventDefault(); cycleTarget(1); return; }
   const m = /^Digit([1-8])$/.exec(e.code);
