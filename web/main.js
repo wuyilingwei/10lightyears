@@ -366,7 +366,21 @@ const bodyFwd = new THREE.Vector3();
 const bodyRight = new THREE.Vector3();
 const bodyUp = new THREE.Vector3();
 const att = { yaw: 0, pitch: 0, roll: 0, inYaw: 0, inPitch: 0 };   // rad/s 与本帧杆量
-const IDLE_SPIN_RATE = 0.012;   // rad/s，无操作时的缓慢自转速率
+// 闲置自转：绕随机挑选的世界轴整体转姿态（轴贴着世界 Y 轴小角度随机倾斜，
+// 每次从"有操作"变回"闲置"才重新挑一次），比原来固定绕 bodyUp 偏航更有
+// 变化；轴贴近世界 Y 是为了避免转出去的圆弧逼近极区触发钳制、显得卡顿。
+const IDLE_SPIN_RATE = 0.012;                    // rad/s，全速自转速率
+const IDLE_SPIN_TILT_MAX = (20 * Math.PI) / 180; // 随机轴相对世界 Y 的最大倾角
+const idleSpinAxis = new THREE.Vector3(0, 1, 0);
+let idleSpinRate = 0;
+let wasIdle = false;
+
+function randomizeIdleSpinAxis() {
+  const tilt = Math.random() * IDLE_SPIN_TILT_MAX;
+  const az = Math.random() * Math.PI * 2;
+  const s = Math.sin(tilt);
+  idleSpinAxis.set(s * Math.cos(az), Math.cos(tilt), s * Math.sin(az));
+}
 const throttle = { gear: 0, v: 0 };                        // su/s，带符号
 // 低速段更密：档位间隔随速度增大，转向/巡航贴近的低速区能精细停靠
 const GEAR_STEPS =
@@ -410,6 +424,7 @@ function attitudeStep(dt) {
   const inAuto = auto.on || auto.assist;
   if (inAuto) {
     att.yaw = 0; att.pitch = 0; att.roll = 0; att.inYaw = 0; att.inPitch = 0;
+    idleSpinRate = 0; wasIdle = false;
     wasAutoOrAssist = true;
     return;
   }
@@ -420,13 +435,26 @@ function attitudeStep(dt) {
   const ip = THREE.MathUtils.clamp(att.inPitch, -1, 1);
   const ir = (held.has("rollR") ? 1 : 0) - (held.has("rollL") ? 1 : 0);
   att.inYaw = 0; att.inPitch = 0;
-  const lim = ENGINE.rcs.angAccel * MANUAL_BOOST * dt;
-  const cap = ENGINE.rcs.angMax * MANUAL_BOOST;
-  att.yaw += THREE.MathUtils.clamp(iy * cap - att.yaw, -lim, lim);
-  att.pitch += THREE.MathUtils.clamp(ip * cap - att.pitch, -lim, lim);
-  att.roll += THREE.MathUtils.clamp(ir * cap - att.roll, -lim, lim);
+  const idleNow = opt.spin && !dragging && held.size === 0 && !joyActive
+    && !iy && !ip && !ir;
+
+  if (idleNow) {
+    if (!wasIdle) randomizeIdleSpinAxis();
+    idleSpinRate += (IDLE_SPIN_RATE - idleSpinRate) * (1 - Math.pow(0.01, dt));
+    att.yaw = 0; att.pitch = 0; att.roll = 0;
+  } else {
+    idleSpinRate *= Math.pow(0.01, dt);   // 一有操作就平滑收掉，不叠加到手动转向上
+    const lim = ENGINE.rcs.angAccel * MANUAL_BOOST * dt;
+    const cap = ENGINE.rcs.angMax * MANUAL_BOOST;
+    att.yaw += THREE.MathUtils.clamp(iy * cap - att.yaw, -lim, lim);
+    att.pitch += THREE.MathUtils.clamp(ip * cap - att.pitch, -lim, lim);
+    att.roll += THREE.MathUtils.clamp(ir * cap - att.roll, -lim, lim);
+  }
+  wasIdle = idleNow;
+
   const yawA = att.yaw * dt, pitA = att.pitch * dt, rollA = att.roll * dt;
-  if (!yawA && !pitA && !rollA) return;
+  const idleA = idleSpinRate * dt;
+  if (!yawA && !pitA && !rollA && !idleA) return;
 
   // 纯转向不该挪机位：applyCamera 仍用「target + radius·球面偏移(theta,phi)」
   // 定位相机，只转 bodyFwd 不动 target 的话，反算出的 theta/phi 一变，
@@ -434,6 +462,13 @@ function attitudeStep(dt) {
   // 隐含机位，转完后把这份漂移原样吃回 target，机位才真正钉死原地
   attPosPre.copy(stateCamPos(cam));
 
+  // 闲置自转：绕固定世界轴整体转（不是机身局部轴），姿态引擎统一处理，
+  // 与下面的手动偏航/俯仰/滚转互斥（idleNow 时 yaw/pitch/roll 恒为 0）
+  if (idleA) {
+    bodyFwd.applyAxisAngle(idleSpinAxis, idleA);
+    bodyRight.applyAxisAngle(idleSpinAxis, idleA);
+    bodyUp.applyAxisAngle(idleSpinAxis, idleA);
+  }
   // 偏航/俯仰/滚转均绕机身"当前"轴转（局部系合成），滚转后俯仰/偏航
   // 仍是屏幕上的俯仰/偏航；三者依次作用在同一组持久向量上
   if (yawA) {
@@ -503,19 +538,22 @@ function throttleStep(dt) {
   cam.goalTarget.addScaledVector(bodyFwd, throttle.v * dt);
 }
 
-/* ── 虚拟摇杆：左杆＝WASD 同职能的辅助平移，右杆纵轴＝滚轮同职能的连续
-   调速、横轴＝翻滚（同 QE）。俯仰/偏航交给指向线（右键/触屏单指按住），
-   摇杆不管这两个轴。仅触屏可见。pointermove 只写归一化矢量，消费集中在
-   frame 的 joyStep 里。各自 setPointerCapture 捕获指针，另一手仍可在
-   画布上捏合缩放。 */
+/* ── 触屏操控：左杆＝WASD 同职能的辅助平移（自由拖拽），右侧＝四方向
+   按钮簇（上下＝滚轮同职能的连续调速、左右＝翻滚，同 QE）——按钮式是为了
+   防止拖拽误触；俯仰/偏航交给指向线（右键/触屏单指按住），两者都不管
+   这两个轴。仅触屏可见。joys[1]（右侧）没有可拖拽 DOM，字段由下面的
+   方向按钮直接写入，joyStep 消费逻辑不用关心输入源是拖拽还是按钮。
+   frame 的 joyStep 里集中消费；左杆 setPointerCapture 捕获指针，
+   另一手仍可在画布上捏合缩放。 */
 const JOY_DEAD = 0.15;
 const joys = [
   { el: document.getElementById("joy-left"), vx: 0, vy: 0, id: -1 },
-  { el: document.getElementById("joy-right"), vx: 0, vy: 0, id: -1 },
+  { vx: 0, vy: 0, id: -1 },   // 右侧：四方向按钮簇写入，无拖拽 DOM
 ];
 let joyActive = 0;
 
-for (const j of joys) {
+{
+  const j = joys[0];
   const nub = j.el.querySelector(".joy-nub");
   const setNub = (x, y) => {
     nub.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
@@ -544,9 +582,6 @@ for (const j of joys) {
     j.el.classList.remove("drag");
     j.vx = 0; j.vy = 0;
     setNub(0, 0);
-    // 右杆横轴驱动的翻滚借用 held 这条既有输入线路，松手/丢指针都要清掉，
-    // 否则 joyActive 归零后 joyStep 直接早退，held 里的滚转标记会卡住
-    held.delete("rollL"); held.delete("rollR");
   };
   j.el.addEventListener("pointerdown", (e) => {
     if (j.id >= 0) return;
@@ -561,6 +596,46 @@ for (const j of joys) {
   j.el.addEventListener("pointerup", (e) => { if (e.pointerId === j.id) release(); });
   j.el.addEventListener("pointercancel", (e) => { if (e.pointerId === j.id) release(); });
   addEventListener("blur", release);
+}
+
+// 右侧四方向按钮：按住即满值、松开归零，直接写 joys[1] 的 vx/vy/id，
+// joyStep 的消费逻辑（含 jr.id>=0 才碰 held 滚转标记那部分）完全不用改
+{
+  const jr = joys[1];
+  const DPAD_KEYS = { "dpad-up": "up", "dpad-down": "down", "dpad-left": "left", "dpad-right": "right" };
+  const dpadHeld = { up: false, down: false, left: false, right: false };
+  const applyDpad = () => {
+    jr.vy = (dpadHeld.up ? -1 : 0) + (dpadHeld.down ? 1 : 0);
+    jr.vx = (dpadHeld.left ? -1 : 0) + (dpadHeld.right ? 1 : 0);
+  };
+  for (const [id, key] of Object.entries(DPAD_KEYS)) {
+    const el = document.getElementById(id);
+    const press = (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      if (dpadHeld[key]) return;
+      dpadHeld[key] = true;
+      if (jr.id < 0) { jr.id = e.pointerId; joyActive += 1; }
+      applyDpad();
+      setAuto(false);
+    };
+    const release = () => {
+      if (!dpadHeld[key]) return;
+      dpadHeld[key] = false;
+      applyDpad();
+      if (!dpadHeld.up && !dpadHeld.down && !dpadHeld.left && !dpadHeld.right) {
+        jr.id = -1;
+        joyActive -= 1;
+        // 松开最后一个方向键才清 held 的滚转标记，否则 joyActive 归零后
+        // joyStep 直接早退，held 里的滚转标记会卡住
+        held.delete("rollL"); held.delete("rollR");
+      }
+    };
+    el.addEventListener("pointerdown", press);
+    el.addEventListener("pointerup", release);
+    el.addEventListener("pointercancel", release);
+    addEventListener("blur", release);
+  }
 }
 
 // 左杆＝WASD 同职能的辅助平移，右杆纵轴＝滚轮同职能的连续调速，
@@ -1111,11 +1186,13 @@ const panelRO = new ResizeObserver(() => syncSkew());
 panelRO.observe(panelLeft);
 panelRO.observe(panelRight);
 
-// 触屏窄横屏时槽位弧向内收，给两侧边缘的摇杆让位
+// 触屏窄横屏时槽位弧向内收，给两侧边缘的摇杆/方向簇让位——比原来的量再
+// 收紧一点，配合槽位本身缩小（.target 在这个断点下更窄更小字），
+// 避免弧与两侧控件视觉重叠
 function targetArcR() {
   const base = vw() * 0.25;
   return coarse && vw() <= 1100 && vw() > vh()
-    ? Math.min(base, Math.max(vw() / 2 - 250, 80)) : base;
+    ? Math.min(base, Math.max(vw() / 2 - 280, 70)) : base;
 }
 
 // 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
@@ -2069,6 +2146,10 @@ bgm.addEventListener("pause", refreshBgmName);
 /* ── 主循环 ─────────────────────────────────────────── */
 
 function resize() {
+  // devicePixelRatio 可能在运行中变化（换屏幕、系统缩放、浏览器缩放），
+  // 每次 resize 都重新读一遍——只在 setSize() 时读一次会导致画布分辨率
+  // 与真实设备像素错位，光点渲染位置和实际投影就会跟着偏
+  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.5 : 2));
   const w = vw(), h = vh();
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
@@ -2085,6 +2166,12 @@ function resize() {
 addEventListener("resize", resize);
 // 伪横屏切换等同一次视口尺寸变化
 fakeLandMq.addEventListener("change", () => { resize(); showRotateToast(); });
+// iOS Safari/Edge（WebKit）地址栏收起展开、双指缩放等场景下 visualViewport
+// 会变但不一定派发 window resize；用它兜底，否则画布/相机还停在旧尺寸，
+// WebGL 渲染的光点跟 SVG 覆盖层（project() 用同一套 vw()/vh()）就会对不上
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", resize);
+}
 resize();
 showRotateToast();
 
@@ -2103,11 +2190,6 @@ function frame(now) {
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
   stepAuto();
-  // 闲置自转：并入 inYaw 输入线路（走机身姿态系统），而不是直接改 goalTheta——
-  // 手动模式下姿态已经完全由 attitudeStep 驱动，goalTheta 只是反算出的只读快照
-  if (opt.spin && !dragging && held.size === 0 && !auto.on && !joyActive) {
-    att.inYaw += IDLE_SPIN_RATE / (ENGINE.rcs.angMax * MANUAL_BOOST);
-  }
   joyStep(dt);          // 杆量先落进姿态/节流输入
   pointerSteerStep();   // 指向线同一路输入
   steerCenterStep();    // 中键长按转向银心，同一路输入

@@ -76,7 +76,7 @@
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
-    position: fixed; left: 50%; top: 50%; width: 15px; height: 15px;
+    position: fixed; left: 50%; top: 50%; width: 1rem; height: 1rem;
     transform: translate(-50%, -50%);
     z-index: 4; pointer-events: none;
   }
@@ -203,7 +203,7 @@
   #cover iframe.on { opacity: 1; }
 
   #title {
-    font-size: .8rem; line-height: 1.38; font-weight: 600;
+    font-size: .68rem; line-height: 1.38; font-weight: 600;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -335,7 +335,7 @@
   #help-panel {
     position: relative; width: min(24rem, 86vw);
     max-height: 84vh; overflow-y: auto;
-    padding: 1.4rem 1.6rem 1.4rem;
+    padding: 1rem 1.1rem .9rem;
     background: linear-gradient(160deg, rgba(10, 17, 31, .94), rgba(7, 11, 21, .92));
     border: 1px solid rgba(242, 200, 75, .4); border-radius: 14px;
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -347,7 +347,7 @@
     text-shadow: 0 0 10px rgba(242, 200, 75, .35);
   }
   #help-close {
-    position: absolute; right: .9rem; top: .95rem;
+    position: absolute; right: .6rem; top: .6rem;
     width: 1.5rem; height: 1.5rem; display: grid; place-items: center;
     border: 1px solid rgba(242, 200, 75, .3); border-radius: 50%;
     background: none; color: var(--text-dim);
@@ -492,7 +492,7 @@
   #rotate-toast.on { opacity: 1; }
   #rotate-toast[hidden] { display: none; }
   /* 虚拟摇杆、中键/空格按钮仅触屏显示，样式在 pointer:coarse 块 */
-  .joy, #mid-btn, #spc-btn { display: none; }
+  .joy, #dpad, #mid-btn, #spc-btn { display: none; }
 
   #footer {
     position: fixed; left: 0; right: 0; bottom: .7rem; z-index: 5;
@@ -537,7 +537,7 @@
     :root { --panel-l: 17rem; --panel-r: 15rem; }
     #panel-left { left: 3vw; }
     #panel-right { right: 3vw; min-height: 11rem; }
-    #reticle { width: 50px; height: 50px; }
+    #reticle { width: 2.6rem; height: 2.6rem; }
     #footer { display: none; }
     #attitude { width: 6.5rem; height: 6.5rem; bottom: .9rem; }
     .target { width: 10rem; }
@@ -550,11 +550,26 @@
     body.fake-land { --panel-l: 17rem; --panel-r: 15rem; }
     body.fake-land #panel-left { left: 3vh; }
     body.fake-land #panel-right { right: 3vh; min-height: 11rem; }
-    body.fake-land #reticle { width: 50px; height: 50px; }
+    body.fake-land #reticle { width: 2.6rem; height: 2.6rem; }
     body.fake-land #footer { display: none; }
     body.fake-land #attitude { width: 6.5rem; height: 6.5rem; bottom: .9rem; }
     body.fake-land .target { width: 10rem; }
     body.fake-land #ctl-row { flex-wrap: wrap; }
+  }
+
+  /* 触屏进一步收紧信息窗并朝内靠：上面两条给的是"窄横屏通用"尺寸，
+     触屏还要再让出两侧摇杆/方向簇的空间（那一片外沿到 7.6rem 左右，
+     留半个 rem 余量到 8.3rem），面板整体再缩小一档、起始位置移到
+     摇杆簇之外 */
+  @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
+    :root { --panel-l: 11rem; --panel-r: 10rem; }
+    #panel-left { left: 8.3rem; padding: 1.5rem .8rem 1.5rem .7rem; }
+    #panel-right { right: 8.3rem; padding: 1.7rem .7rem 1.7rem .8rem; min-height: 8rem; }
+  }
+  @media (max-height: 1100px) {
+    body.fake-land { --panel-l: 11rem; --panel-r: 10rem; }
+    body.fake-land #panel-left { left: 7.8rem; padding: 1.5rem .8rem 1.5rem .7rem; }
+    body.fake-land #panel-right { right: 7.8rem; padding: 1.7rem .7rem 1.7rem .8rem; min-height: 8rem; }
   }
 
   /* 手机整体缩小：rem 是全站尺寸单位，改根字号即可让按钮/面板/HUD 文字
@@ -574,7 +589,7 @@
   @media (pointer: coarse) {
     #stage { touch-action: none; }
     #tooltip { display: none; }
-    /* 虚拟摇杆：两侧内收、中线下移，落在楔形面板让出的空区 */
+    /* 左摇杆：自由拖拽的平移杆，两侧内收、中线下移，落在楔形面板让出的空区 */
     .joy {
       display: block; position: fixed; top: 68%; transform: translateY(-50%);
       width: 6.5rem; height: 6.5rem; z-index: 8; border-radius: 50%;
@@ -584,7 +599,6 @@
       touch-action: none;
     }
     #joy-left { left: 3rem; }
-    #joy-right { right: 3rem; }
     .joy-nub {
       position: absolute; left: 50%; top: 50%; width: 2.6rem; height: 2.6rem;
       border-radius: 50%; border: 1px solid rgba(242, 200, 75, .5);
@@ -595,49 +609,169 @@
     }
     .joy.drag .joy-nub { transition: none; }   /* 拖动中即时跟随 */
 
-    /* 中键/空格按钮：分别贴在左右摇杆正上方 */
-    #mid-btn, #spc-btn {
+    /* 右侧改四方向按钮簇（替代自由拖拽的摇杆，离散按住/松开，不会因为
+       手指滑动误触发方向）：上下=油门连续调速，左右=翻滚；中键按钮挪进
+       簇正中央，与左摇杆位置对称 */
+    #dpad {
+      display: block; position: fixed; right: 3rem; top: 68%;
+      transform: translateY(-50%); width: 6.5rem; height: 6.5rem; z-index: 8;
+    }
+    .dpad-btn {
+      position: absolute; display: flex; align-items: center; justify-content: center;
+      width: 2.3rem; height: 2.3rem; border-radius: 8px;
+      background: rgba(9, 15, 28, .3); color: var(--text-dim);
+      border: 1px solid rgba(242, 200, 75, .3); touch-action: none;
+      font-size: .62rem; line-height: 1;
+    }
+    .dpad-btn:active { color: var(--accent); background: rgba(242, 200, 75, .16); }
+    #dpad-up    { left: 50%; top: 0;    transform: translateX(-50%); }
+    #dpad-down  { left: 50%; bottom: 0; transform: translateX(-50%); }
+    #dpad-left  { left: 0;   top: 50%;  transform: translateY(-50%); }
+    #dpad-right { right: 0;  top: 50%;  transform: translateY(-50%); }
+    #mid-btn {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
       display: flex; align-items: center; justify-content: center;
-      position: fixed; top: calc(68% - 6.6rem); z-index: 8;
+      width: 2.6rem; height: 2.6rem; border-radius: 50%;
+      background: rgba(9, 15, 28, .3); color: var(--text-dim);
+      border: 1px solid rgba(242, 200, 75, .3); touch-action: none;
+    }
+    #mid-btn:active { color: var(--accent); background: rgba(242, 200, 75, .16); }
+
+    /* 空格按钮：贴在左摇杆/方向簇之外，右侧控制簇正上方 */
+    #spc-btn {
+      display: flex; align-items: center; justify-content: center;
+      position: fixed; right: 3.4rem; top: calc(68% - 6.6rem); z-index: 8;
       width: 2.8rem; height: 2.8rem; border-radius: 50%;
       background: rgba(9, 15, 28, .3); color: var(--text-dim);
       border: 1px solid rgba(242, 200, 75, .3); touch-action: none;
     }
-    #mid-btn:active, #spc-btn:active { color: var(--accent); background: rgba(242, 200, 75, .16); }
-    #mid-btn { left: 3.4rem; }
-    #spc-btn { right: 3.4rem; }
+    #spc-btn:active { color: var(--accent); background: rgba(242, 200, 75, .16); }
   }
 
   @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
-    #mid-btn, #spc-btn { top: calc(66% - 5.8rem); width: 2.3rem; height: 2.3rem; }
-    #mid-btn { left: 2.2rem; }
-    #spc-btn { right: 2.2rem; }
+    #spc-btn { top: calc(66% - 5.8rem); width: 2.3rem; height: 2.3rem; right: 2.2rem; }
   }
   @media (max-height: 1100px) {
-    body.fake-land #mid-btn, body.fake-land #spc-btn {
-      top: calc(66% - 5.8rem); width: 2.3rem; height: 2.3rem;
-    }
-    body.fake-land #mid-btn { left: 2.2rem; }
-    body.fake-land #spc-btn { right: 2.2rem; }
+    body.fake-land #spc-btn { top: calc(66% - 5.8rem); width: 2.3rem; height: 2.3rem; right: 2.2rem; }
   }
 
-  /* 窄横屏摇杆避让：缩小、内收并下移，绕开槽位行与楔形面板 */
+  /* 窄横屏摇杆/按钮簇避让：缩小、内收并下移，绕开槽位行与楔形面板 */
   @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
-    .joy { width: 5.6rem; height: 5.6rem; top: 66%; }
+    .joy, #dpad { width: 5.6rem; height: 5.6rem; top: 66%; }
     .joy-nub { width: 2.2rem; height: 2.2rem; }
     #joy-left { left: 2rem; }
-    #joy-right { right: 2rem; }
-    /* 槽位随 JS 收窄的弧同步缩短，避开摇杆 */
-    .target { width: 8rem; }
+    #dpad { right: 2rem; }
+    .dpad-btn { width: 2rem; height: 2rem; }
+    #mid-btn { width: 2.2rem; height: 2.2rem; }
+    /* 槽位随 JS 收窄的弧同步缩短、字更小，避开摇杆/方向簇/中键 */
+    .target {
+      width: 7rem; min-height: 1.3rem; padding: .16rem .5rem;
+      font-size: .5rem; gap: .3rem;
+    }
+    .target .w { font-size: .46rem; }
   }
 
-  /* 伪横屏摇杆：等价窄横屏（旋转后的横向宽度即物理高度） */
+  /* 伪横屏摇杆/按钮簇：等价窄横屏（旋转后的横向宽度即物理高度） */
   @media (max-height: 1100px) {
-    body.fake-land .joy { width: 5.6rem; height: 5.6rem; top: 66%; }
+    body.fake-land .joy, body.fake-land #dpad { width: 5.6rem; height: 5.6rem; top: 66%; }
     body.fake-land .joy-nub { width: 2.2rem; height: 2.2rem; }
     body.fake-land #joy-left { left: 2rem; }
-    body.fake-land #joy-right { right: 2rem; }
-    body.fake-land .target { width: 8rem; }
+    body.fake-land #dpad { right: 2rem; }
+    body.fake-land .dpad-btn { width: 2rem; height: 2rem; }
+    body.fake-land #mid-btn { width: 2.2rem; height: 2.2rem; }
+    body.fake-land .target {
+      width: 7rem; min-height: 1.3rem; padding: .16rem .5rem;
+      font-size: .5rem; gap: .3rem;
+    }
+    body.fake-land .target .w { font-size: .46rem; }
+  }
+
+  /* ── 开屏贺词 ──────────────────────────────────────────── */
+  #splash {
+    position: fixed; inset: 0; z-index: 40;
+    display: grid; place-items: center;
+    background:
+      radial-gradient(70vw 55vh at 25% 18%, rgba(64, 108, 168, 0.18), transparent),
+      radial-gradient(55vw 45vh at 78% 78%, rgba(150, 84, 168, 0.14), transparent),
+      var(--ink);
+    transition: opacity .8s ease, visibility .8s;
+  }
+  #splash.out { opacity: 0; visibility: hidden; pointer-events: none; }
+  #splash-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  #splash-card {
+    position: relative; z-index: 1;
+    width: min(28rem, 88vw);
+    padding: 2.4rem 2rem 2rem;
+    background: linear-gradient(160deg, rgba(10,17,31,.92), rgba(7,11,21,.88));
+    border: 1px solid rgba(242, 200, 75, .32); border-radius: 16px;
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    text-align: center;
+    animation: splash-in .9s ease both;
+  }
+  @keyframes splash-in {
+    from { opacity: 0; transform: translateY(18px); }
+  }
+  .splash-era {
+    margin: 0 0 .9rem; font-size: .52rem; letter-spacing: .36em;
+    color: var(--text-dim);
+  }
+  .splash-logo {
+    display: block; margin: 0 auto .8rem;
+    width: 2.6rem; height: auto;
+    filter: drop-shadow(0 0 14px rgba(242, 200, 75, .5));
+  }
+  .splash-title {
+    margin: 0 0 .25rem; font-size: 1.7rem; font-weight: 300;
+    letter-spacing: .5em; color: var(--accent);
+    text-shadow: 0 0 32px rgba(242, 200, 75, .45), 0 0 80px rgba(242, 200, 75, .18);
+  }
+  .splash-site {
+    margin: 0 0 1.4rem; font-size: .6rem; letter-spacing: .26em;
+    color: var(--text-dim);
+  }
+  .splash-verse {
+    margin: 0 0 1.3rem; font-size: .71rem; line-height: 2.1;
+    color: var(--text);
+  }
+  .splash-verse p { margin: 0; }
+  .splash-rule {
+    height: 1px; width: 60%; margin: 0 auto 1.2rem;
+    background: linear-gradient(90deg, transparent, rgba(242,200,75,.35), transparent);
+  }
+  .splash-credits {
+    display: flex; justify-content: center; gap: 2.4rem;
+    margin-bottom: 1rem;
+  }
+  .splash-credits > div { display: flex; flex-direction: column; gap: .18rem; }
+  .splash-role { font-size: .5rem; letter-spacing: .2em; color: var(--text-dim); }
+  .splash-author { font-size: .64rem; color: var(--text); font-weight: 500; }
+  .splash-notice {
+    margin: 0 0 1.5rem; padding: .55rem .8rem;
+    font-size: .49rem; line-height: 1.75; color: var(--text-dim);
+    background: rgba(255,255,255,.025); border-radius: 8px;
+    border: 1px solid rgba(242,200,75,.08);
+  }
+  #splash-btn {
+    width: 100%; padding: .72rem 1rem;
+    background: linear-gradient(135deg, rgba(242,200,75,.16), rgba(242,200,75,.08));
+    border: 1px solid rgba(242,200,75,.5); border-radius: 8px;
+    color: var(--accent); font: inherit; font-size: .74rem;
+    letter-spacing: .16em; cursor: pointer;
+    transition: background .22s, border-color .22s, box-shadow .22s, transform .1s;
+    animation: btn-pulse 3s ease-in-out 1.4s infinite;
+  }
+  #splash-btn:hover {
+    background: linear-gradient(135deg, rgba(242,200,75,.28), rgba(242,200,75,.14));
+    border-color: rgba(242,200,75,.8);
+    box-shadow: 0 0 0 3px rgba(242,200,75,.1), 0 0 22px rgba(242,200,75,.18);
+  }
+  #splash-btn:active { transform: scale(.98); animation: none; }
+  @keyframes btn-pulse {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 0 4px rgba(242,200,75,.1), 0 0 16px rgba(242,200,75,.1); }
   }
 </style>
 </head>
@@ -799,14 +933,21 @@
 <audio id="bgm" preload="none"></audio>
 
 <div id="joy-left" class="joy" aria-hidden="true"><div class="joy-nub"></div></div>
-<div id="joy-right" class="joy" aria-hidden="true"><div class="joy-nub"></div></div>
-<button id="mid-btn" type="button" aria-label="停船·长按转向银心">
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
-       stroke="currentColor" stroke-width="1.5">
-    <circle cx="8" cy="8" r="6"/>
-    <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/>
-  </svg>
-</button>
+<!-- 右摇杆改四方向按钮式：上下=油门连续调速、左右=翻滚，防止拖拽误触；
+     中键挪到按钮簇正中央 -->
+<div id="dpad" aria-hidden="true">
+  <button id="dpad-up" class="dpad-btn" type="button" aria-label="加速">▲</button>
+  <button id="dpad-down" class="dpad-btn" type="button" aria-label="减速">▼</button>
+  <button id="dpad-left" class="dpad-btn" type="button" aria-label="向左滚转">◀</button>
+  <button id="dpad-right" class="dpad-btn" type="button" aria-label="向右滚转">▶</button>
+  <button id="mid-btn" type="button" aria-label="停船·长按转向银心">
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
+         stroke="currentColor" stroke-width="1.5">
+      <circle cx="8" cy="8" r="6"/>
+      <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/>
+    </svg>
+  </button>
+</div>
 <button id="spc-btn" type="button" aria-label="空格：确认预选 · 飞向已锁定目标">
   <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
        stroke="currentColor" stroke-width="1.5">
@@ -848,6 +989,71 @@
     <div class="help-row"><span>左上角切换</span><b>手动 · 巡游 · 漫游</b></div>
   </div>
 </div>
+
+<div id="splash">
+  <canvas id="splash-canvas"></canvas>
+  <div id="splash-card">
+    <p class="splash-era">STARDUST · 2016.8.12 — 2026.8.12</p>
+    <img class="splash-logo" src="./icon.svg" alt="">
+    <h2 class="splash-title">星尘十周年</h2>
+    <p class="splash-site">十光年的距离 · 投稿星图</p>
+    <div class="splash-verse">
+      <p>十年间，B 站上每一支献给星尘的投稿都在此化为星辰</p>
+      <p>每一颗星，都是创作者对星尘的爱</p>
+      <p>星尘与热爱它的人，一同构成了这片银河</p>
+    </div>
+    <div class="splash-rule"></div>
+    <div class="splash-credits">
+      <div>
+        <span class="splash-role">美术 · 设计 · 编码</span>
+        <span class="splash-author">武乙凌薇</span>
+      </div>
+      <div>
+        <span class="splash-role">数据处理</span>
+        <span class="splash-author">StarryMiko2233</span>
+      </div>
+    </div>
+    <p class="splash-notice">曲目数据为自动抓取，以标题关键词匹配；截止 2026 年 6 月，无法保证收录无遗漏或范围精准。</p>
+    <button id="splash-btn">尘尘十周年生日快乐！！！</button>
+  </div>
+</div>
+<script>
+(function () {
+  var c = document.getElementById('splash-canvas');
+  var ctx = c.getContext('2d');
+  var dpr = Math.min(devicePixelRatio, 2);
+  var stars = [];
+  for (var i = 0; i < 140; i++) {
+    stars.push({ x: Math.random(), y: Math.random(),
+      r: Math.random() * 1.05 + 0.2,
+      ph: Math.random() * 6.28,
+      sp: Math.random() * 0.4 + 0.18 });
+  }
+  var alive = true;
+  function resize() { c.width = innerWidth * dpr; c.height = innerHeight * dpr; }
+  resize();
+  addEventListener('resize', resize);
+  function frame(t) {
+    if (!alive) return;
+    ctx.clearRect(0, 0, c.width, c.height);
+    stars.forEach(function (s) {
+      var a = 0.22 + 0.55 * (0.5 + 0.5 * Math.sin(t * 0.001 * s.sp + s.ph));
+      ctx.beginPath();
+      ctx.arc(s.x * c.width, s.y * c.height, s.r * dpr, 0, 6.28);
+      ctx.fillStyle = 'rgba(223,232,242,' + a.toFixed(2) + ')';
+      ctx.fill();
+    });
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  document.getElementById('splash-btn').addEventListener('click', function () {
+    alive = false;
+    var el = document.getElementById('splash');
+    el.classList.add('out');
+    el.addEventListener('transitionend', function () { el.style.display = 'none'; }, { once: true });
+  });
+})();
+</script>
 
 <div id="loading">
   <div id="load-inner">
