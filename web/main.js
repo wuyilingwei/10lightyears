@@ -620,17 +620,45 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-// 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
-// 面板是平行四边形，上下边斜率都是 8% 高 / 宽；倾角按实测尺寸算才对得齐
+/* 面板平行四边形：两板共用同一屏幕斜率（内侧边高、外侧边矮），
+   高度差按各自实测宽高比换算；rotateY 之后 getBoundingClientRect
+   是投影后的包围盒，必须用 offsetWidth/offsetHeight */
+const PANEL_SLOPE = 0.14;                                    // tan(倾角)
+// 与竖屏叠放布局的媒体查询一致
+const panelStacked = matchMedia("(max-width: 900px) and (orientation: portrait)");
+
 function syncSkew() {
-  for (const [el, name, sign] of [[panelLeft, "--skew-l", -1], [panelRight, "--skew-r", 1]]) {
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) continue;
-    const deg = (Math.atan2(0.08 * r.height, r.width) * 180) / Math.PI;
-    document.documentElement.style.setProperty(name, `${(sign * deg).toFixed(2)}deg`);
+  const root = document.documentElement.style;
+  for (const [el, skewVar, tiltVar, sign] of [
+    [panelLeft, "--skew-l", "--tilt-l", -1],
+    [panelRight, "--skew-r", "--tilt-r", 1],
+  ]) {
+    if (panelStacked.matches) {
+      // 叠放布局：内联 clip-path 会盖过媒体查询的 clip-path: none，须清空
+      el.style.clipPath = "";
+      root.setProperty(skewVar, "0deg");
+      root.setProperty(tiltVar, "0deg");
+      continue;
+    }
+    root.removeProperty(tiltVar);
+    const w = el.offsetWidth, h = el.offsetHeight;
+    if (!w || !h) continue;
+    // 高度不足以达到统一斜率时收在 45%，内容倾角跟随实际边缘
+    const d = Math.min(((PANEL_SLOPE * w) / h) * 100, 45);
+    const skew = (Math.atan(((d / 100) * h) / w) * 180) / Math.PI;
+    const lo = d.toFixed(2), hi = (100 - d).toFixed(2);
+    // sign<0 为左板：右缘是内侧边；右板镜像
+    el.style.clipPath = sign < 0
+      ? `polygon(0 ${lo}%, 100% 0, 100% ${hi}%, 0 100%)`
+      : `polygon(0 0, 100% ${lo}%, 100% 100%, 0 ${hi}%)`;
+    el.querySelector(".panel-edge polygon")?.setAttribute("points", sign < 0
+      ? `0,${lo} 100,0 100,${hi} 0,100`
+      : `0,0 100,${lo} 100,100 0,${hi}`);
+    root.setProperty(skewVar, `${(sign * skew).toFixed(2)}deg`);
   }
 }
 
+// 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
 function layoutTargets() {
   const cx = innerWidth / 2, cy = innerHeight / 2;
   const R = innerWidth * 0.25 + 6;   // 贴在弧的外侧
