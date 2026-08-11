@@ -601,9 +601,13 @@ function fillLinks(i) {
     el.querySelector(".w").textContent = r.w.toFixed(2);
   });
   elTargets.classList.add("on");
+  document.body.classList.add("has-sel");
 }
 
-function clearLinks() { elTargets.classList.remove("on"); }
+function clearLinks() {
+  elTargets.classList.remove("on");
+  document.body.classList.remove("has-sel");
+}
 
 function pick(x, y, focus) {
   const i = nearest(x, y, 16);
@@ -954,6 +958,8 @@ const speedTicks = document.getElementById("speed-ticks");
 const speedMark = document.getElementById("speed-mark");
 const speedZero = document.getElementById("speed-zero");
 const labels = document.getElementById("hud-labels");
+const arcTgtL = document.getElementById("arc-tgt-l");
+const arcTgtR = document.getElementById("arc-tgt-r");
 const elBgmName = document.getElementById("bgm-name");
 const elHudSpeed = document.getElementById("hud-speed");
 const elHudMode = document.getElementById("hud-mode");
@@ -962,6 +968,8 @@ const elHudMode = document.getElementById("hud-mode");
 const A_SPAN = 90, A_MID = 90;
 const A0 = A_MID + A_SPAN / 2;   // 左端（倒车满）
 const A1 = A_MID - A_SPAN / 2;   // 右端（前进满）
+// 零点放在弧长 1/3 处：绝大多数时候是前进，正向该占更长一段
+const A_ZERO = A0 + (A1 - A0) / 3;
 const SPEED_FULL = 900;          // 量程上限 ly/s
 
 const polar = (cx, cy, r, deg) => {
@@ -981,9 +989,10 @@ let hudGeom = null;
 function layoutHud() {
   const w = innerWidth, h = innerHeight;
   hudSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  const cx = w / 2, cy = h * 0.44;          // 圆心在屏幕中心略上方
-  const rSpeed = Math.min(h * 0.38, w * 0.3);
-  const rBgm = rSpeed + 20;
+  // 圆心仍在屏幕中心略上方；半径缩到 1/3 后再高就会和准星叠在一起
+  const cx = w / 2, cy = h * 0.48;
+  const rSpeed = Math.min(h * 0.38, w * 0.3) / 3;
+  const rBgm = rSpeed + 11;      // 两条紧贴，中间只留出游标的位置
   hudGeom = { cx, cy, rSpeed, rBgm };
 
   arcSpeedBg.setAttribute("d", arcPath(cx, cy, rSpeed, A0, A1));
@@ -991,8 +1000,8 @@ function layoutHud() {
   arcBgm.setAttribute("d", arcPath(cx, cy, rBgm, A0, A1));
   arcBgm.style.strokeDasharray = `0 ${arcBgm.getTotalLength()}`;
 
-  const [zx0, zy0] = polar(cx, cy, rSpeed - 9, A_MID);
-  const [zx1, zy1] = polar(cx, cy, rSpeed + 7, A_MID);
+  const [zx0, zy0] = polar(cx, cy, rSpeed - 7, A_ZERO);
+  const [zx1, zy1] = polar(cx, cy, rSpeed + 4, A_ZERO);
   speedZero.setAttribute("x1", zx0.toFixed(1)); speedZero.setAttribute("y1", zy0.toFixed(1));
   speedZero.setAttribute("x2", zx1.toFixed(1)); speedZero.setAttribute("y2", zy1.toFixed(1));
 
@@ -1004,7 +1013,13 @@ function layoutHud() {
          + ` x2="${bx.toFixed(1)}" y2="${by.toFixed(1)}"/>`;
   }).join("");
 
-  labels.style.top = `${(cy + rSpeed + 26).toFixed(0)}px`;
+  labels.style.top = `${(cy + rBgm + 18).toFixed(0)}px`;
+
+  // 攻击指示器的内圈弧，贴在槽位弧的内侧
+  const rt = innerWidth * 0.46 - 34;
+  const half = TARGET_SPREAD / 2 + 3;
+  arcTgtL.setAttribute("d", arcPath(cx, innerHeight / 2, rt, 180 - half, 180 + half));
+  arcTgtR.setAttribute("d", arcPath(cx, innerHeight / 2, rt, -half, half));
 }
 
 let shownSpeed = 0;
@@ -1016,15 +1031,17 @@ function updateHud(signedSpeed) {
   // 开方压缩量程，低速段才有分辨率；符号决定落在中点的哪一侧
   const mag = THREE.MathUtils.clamp(Math.sqrt(Math.abs(shownSpeed) / SPEED_FULL), 0, 1);
   const f = Math.sign(shownSpeed) * mag;
-  const d = A_MID - (A_SPAN / 2) * f;
+  const d = f >= 0 ? A_ZERO + (A1 - A_ZERO) * f : A_ZERO + (A_ZERO - A0) * f;
 
-  // 游标在弧内侧朝外指，放外侧会顶到进度弧
-  const [tx, ty] = polar(cx, cy, rSpeed - 7, d);
-  const [lx, ly] = polar(cx, cy, rSpeed - 18, d - 2.6);
-  const [rx, ry] = polar(cx, cy, rSpeed - 18, d + 2.6);
+  // 游标嵌在两条弧之间的缝里。尺寸按像素给，否则半径一缩角度宽度就失真
+  const rad = (d * Math.PI) / 180;
+  const ux = Math.cos(rad), uy = Math.sin(rad);      // 径向
+  const tanx = -uy, tany = ux;                        // 切向
+  const mid = rSpeed + 3.5;
+  const tri = (ar, at) =>
+    `${(cx + ux * ar + tanx * at).toFixed(1)},${(cy + uy * ar + tany * at).toFixed(1)}`;
   speedMark.setAttribute("points",
-    `${tx.toFixed(1)},${ty.toFixed(1)} ${lx.toFixed(1)},${ly.toFixed(1)} `
-    + `${rx.toFixed(1)},${ry.toFixed(1)}`);
+    `${tri(mid + 5.5, 0)} ${tri(mid, -4.5)} ${tri(mid, 4.5)}`);
 
   const rev = shownSpeed < -1;
   hudSvg.classList.toggle("rev", rev);

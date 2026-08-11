@@ -59,7 +59,7 @@
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
-    position: fixed; left: 50%; top: 50%; width: 148px; height: 148px;
+    position: fixed; left: 50%; top: 50%; width: 118px; height: 118px;
     transform: translate(-50%, -50%);
     z-index: 4; pointer-events: none;
   }
@@ -77,6 +77,9 @@
                 stroke-linecap: butt; filter: drop-shadow(0 0 4px rgba(242,200,75,.45)); }
   #hud .tick  { stroke: rgba(242, 200, 75, .26); stroke-width: 1; }
   #hud .zero  { stroke: rgba(242, 200, 75, .5); stroke-width: 1.4; }
+  #hud .tgt-arc { fill: none; stroke: rgba(126, 200, 255, .30);
+                  stroke-width: 1.2; opacity: 0; transition: opacity .3s; }
+  body.has-sel #hud .tgt-arc { opacity: 1; }
   #speed-mark { fill: var(--accent); opacity: .9;
                 filter: drop-shadow(0 0 5px rgba(242,200,75,.6)); }
   #hud.rev #speed-mark { fill: #ff9a6b; filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
@@ -110,6 +113,9 @@
     transition: opacity .28s ease, visibility .28s;
   }
   .hud-panel.on { opacity: 1; visibility: visible; }
+  /* 内容跟着梯形一起倾斜，否则文字与边缘不平行 */
+  #panel-left > *:not(.panel-edge) { transform: skewY(3.2deg); }
+  #panel-right > *:not(.panel-edge) { transform: skewY(-3.2deg); }
   /* clip-path 会把 border 一起裁掉，边框改用内嵌 SVG 描边 */
   .panel-edge {
     position: absolute; inset: 0; width: 100%; height: 100%;
@@ -122,13 +128,15 @@
 
   #panel-left {
     left: 8vw; width: var(--panel-l);
-    clip-path: polygon(0 0, 100% 14%, 100% 86%, 0 100%);
-    padding: .7rem 1.5rem 1.5rem .7rem;
+    clip-path: polygon(0 0, 100% 6%, 100% 90%, 0 100%);
+    padding: 1.1rem 1.5rem 1.5rem .8rem;
+    min-height: 15rem;
   }
   #panel-right {
     right: 8vw; width: var(--panel-r);
-    clip-path: polygon(0 14%, 100% 0, 100% 100%, 0 86%);
-    padding: 1.6rem .8rem 1.6rem 1.5rem;
+    clip-path: polygon(0 6%, 100% 0, 100% 100%, 0 90%);
+    padding: 1.5rem .8rem 1.5rem 1.5rem;
+    min-height: 15rem;
     display: flex; flex-direction: column; gap: .4rem;
   }
 
@@ -172,19 +180,23 @@
     display: flex; align-items: center; gap: .4rem;
     max-width: 13rem; padding: .18rem .42rem;
     font-size: .58rem; line-height: 1.35; letter-spacing: .02em;
-    background: rgba(8, 14, 26, .5);
-    border: 1px solid rgba(242, 200, 75, .22);
-    opacity: 0; transition: opacity .3s ease, background .18s, border-color .18s;
+    opacity: 0; transition: opacity .3s ease, filter .18s;
   }
-  #targets.on .target { opacity: .82; }
-  .target:hover { opacity: 1; background: rgba(242, 200, 75, .16);
-                  border-color: rgba(242, 200, 75, .55); }
+  /* 极淡的蓝底，朝向中心的一侧略深，取代原来生硬的边框 */
+  .target.left  { background: linear-gradient(to left,
+                    rgba(126, 200, 255, .20), rgba(126, 200, 255, .04)); }
+  .target.right { background: linear-gradient(to right,
+                    rgba(126, 200, 255, .20), rgba(126, 200, 255, .04)); }
+  #targets.on .target { opacity: .9; }
+  .target:hover { opacity: 1; filter: brightness(1.5); }
   .target .t { flex: 1; min-width: 0; color: var(--text);
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .target .w { flex: none; color: var(--accent); font-size: .52rem;
                font-variant-numeric: tabular-nums; }
-  .target.left { transform: translateY(-50%); }
-  .target.right { transform: translate(-100%, -50%); flex-direction: row-reverse; }
+  /* 数字放离心侧：左列在最左，右列在最右 */
+  .target.left { transform: translateY(-50%); flex-direction: row-reverse; }
+  .target.right { transform: translate(-100%, -50%); }
+  .target.left .t { text-align: left; }
   .target.right .t { text-align: right; }
 
   /* ── 搜索：常规圆角边框 ───────────────────────────── */
@@ -347,8 +359,10 @@
 
 <svg id="reticle" viewBox="0 0 148 148" aria-hidden="true">
   <!-- 上下各 120°，左右各留 60° 缺口 -->
-  <path d="M25.5 46 A56 56 0 0 1 122.5 46"/>
-  <path d="M122.5 102 A56 56 0 0 1 25.5 102"/>
+  <path d="M129.15,83.72 A56 56 0 0 1 83.72,129.15"/>
+  <path d="M64.28,129.15 A56 56 0 0 1 18.85,83.72"/>
+  <path d="M18.85,64.28 A56 56 0 0 1 64.28,18.85"/>
+  <path d="M83.72,18.85 A56 56 0 0 1 129.15,64.28"/>
   <circle cx="74" cy="74" r="1.6"/>
 </svg>
 
@@ -366,6 +380,8 @@
   <g id="speed-ticks"></g>
   <line id="speed-zero" class="zero"></line>
   <polygon id="speed-mark"></polygon>
+  <path id="arc-tgt-l" class="tgt-arc"></path>
+  <path id="arc-tgt-r" class="tgt-arc"></path>
 </svg>
 
 <div id="hud-labels">
