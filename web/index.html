@@ -126,6 +126,8 @@
     transition: opacity .28s ease, visibility .28s;
   }
   .hud-panel.on { opacity: 1; visibility: visible; }
+  /* 左板没有曲目也没有 BGM 行时是一块空楔形，整板收起 */
+  body:not(.has-sel):not(.bgm-on) #panel-left { opacity: 0; visibility: hidden; }
   /* 内容跟着梯形一起倾斜，否则文字与边缘不平行 */
   #panel-left > *:not(.panel-edge) { transform: skewY(var(--skew-l, 0deg)); }
   #panel-right > *:not(.panel-edge) { transform: skewY(var(--skew-r, 0deg)); }
@@ -428,7 +430,6 @@
   }
 
   @media (max-width: 900px) {
-    #search-wrap { left: .7rem; top: .7rem; width: calc(100% - 4.4rem); }
     #results { max-height: 40vh; }
     #brand { right: .7rem; top: .7rem; gap: 0; }
     #brand h1, #brand p { display: none; }

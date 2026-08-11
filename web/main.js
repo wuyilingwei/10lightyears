@@ -82,12 +82,17 @@ function approachRadial(cur, v, goal, dt) {
 function applyCamera(dt) {
   if (auto.on || auto.assist) {
     const k = 1 - Math.pow(1e-4, dt);
+    const pt = cam.theta, pp = cam.phi, pr = cam.radius;
     cam.theta += (cam.goalTheta - cam.theta) * k;   // theta 已解缠，可直接插
     cam.phi = THREE.MathUtils.clamp(
       cam.phi + (cam.goalPhi - cam.phi) * k, 0.04, Math.PI - 0.04);
     cam.radius += (cam.goalRadius - cam.radius) * k;
     cam.target.lerp(cam.goalTarget, k);
-    vel.theta = vel.phi = vel.r = vel.pan = 0;
+    // 隐含速度写回 vel：打断切手动时引擎按制动包络接住动量，而不是一帧骤停
+    vel.theta = (cam.theta - pt) / dt;
+    vel.phi = (cam.phi - pp) / dt;
+    vel.r = (cam.radius - pr) / dt;
+    vel.pan = 0;
   } else {
     [cam.theta, vel.theta] = approach(cam.theta, vel.theta, cam.goalTheta,
       ENGINE.rcs.angAccel, ENGINE.rcs.angMax, dt);
@@ -167,8 +172,11 @@ canvas.addEventListener("pointermove", (e) => {
       if (s.d > 1 && pinch.d > 1) {
         cam.goalRadius = THREE.MathUtils.clamp(
           cam.goalRadius * (pinch.d / s.d), cam.minRadius, cam.maxRadius);
+        leashRadius();
       }
-      panScreen(-(s.mx - pinch.mx), s.my - pinch.my);
+      // 手势给的是像素，先换算成场景单位再喂平移
+      const wpp = panWorldPerPixel();
+      panScreen(-(s.mx - pinch.mx) * wpp, (s.my - pinch.my) * wpp);
     }
     pinch = s;
   }
@@ -212,12 +220,30 @@ document.addEventListener("visibilitychange", () => {
 
 const panScratch = new THREE.Vector3();
 
-// 沿屏幕平面平移视点，dx/dy 为场景单位
+// 屏幕中心处 1px 对应的场景距离，手势像素输入用它换算 su
+function panWorldPerPixel() {
+  return (2 * cam.radius * Math.tan((camera.fov * Math.PI) / 360)) / innerHeight;
+}
+
+// 沿屏幕平面平移视点，dx/dy 为场景单位。
+// goal 拴在引擎短时可达范围内，任何输入路径都甩不开机体
 function panScreen(dx, dy) {
   if (dx === 0 && dy === 0) return;
   camera.matrixWorld.extractBasis(panRight, panUp, panScratch);
   cam.goalTarget.addScaledVector(panRight, dx);
   cam.goalTarget.addScaledVector(panUp, dy);
+  panDelta.subVectors(cam.goalTarget, cam.target);
+  const leash = ENGINE.rcs.panMax * 1.5;
+  if (panDelta.length() > leash) {
+    cam.goalTarget.copy(cam.target).addScaledVector(panDelta.normalize(), leash);
+  }
+}
+
+// 半径 goal 同理拴住：倒车侧只有 100 ly/s，不拴会积累几十秒的橡皮筋
+function leashRadius() {
+  cam.goalRadius = THREE.MathUtils.clamp(cam.goalRadius,
+    Math.max(cam.minRadius, cam.radius - ENGINE.main.vFwd * 2),
+    Math.min(cam.maxRadius, cam.radius + ENGINE.main.vRev * 2));
 }
 
 // 步长取平移引擎绝对上限，goal 不甩开引擎
@@ -311,6 +337,7 @@ function stepZoom(dt) {
   if (Math.abs(zoomVel) < 1e-4) { zoomVel = 0; return; }
   cam.goalRadius = THREE.MathUtils.clamp(
     cam.goalRadius * Math.exp(zoomVel * dt * 5), cam.minRadius, cam.maxRadius);
+  leashRadius();
   zoomVel *= Math.pow(ZOOM_KEEP, dt);
 }
 
@@ -726,12 +753,9 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
    剪影和描边多边形共用同一组顶点；空板高度不足时内侧边收缩成尖角。 */
 const PANEL_TOP_DEG = 3.2;
 const PANEL_BOT_DEG = 22;
-const panelPortrait = matchMedia("(max-width: 900px) and (orientation: portrait)");
 
 function syncSkew() {
   for (const [el, innerRight] of [[panelLeft, true], [panelRight, false]]) {
-    // 竖屏走矩形卡片布局，交还给样式表
-    if (panelPortrait.matches) { el.style.clipPath = ""; continue; }
     // rotateY 下 getBoundingClientRect 是投影包围盒，必须用 offset 尺寸
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) continue;
@@ -973,9 +997,11 @@ const easeIn = (u) => u * u;              // 点火加速
 const easeOut = (u) => 1 - (1 - u) * (1 - u);   // 熄火滑行
 
 function snapshotCam() {
+  // 取机体实际位形而非 goal：滚轮/拖拽可能让 goal 甩开机体，
+  // 段起点若取 goal，直跟分支会把脱开量一口吞成瞬移
   return {
-    theta: cam.goalTheta, phi: cam.goalPhi, radius: cam.goalRadius,
-    target: cam.goalTarget.clone(),
+    theta: cam.theta, phi: cam.phi, radius: cam.radius,
+    target: cam.target.clone(),
   };
 }
 
@@ -1003,7 +1029,7 @@ function aimFrom(pos, point, thetaRef) {
     phi: Math.acos(THREE.MathUtils.clamp(aimV.y / r, -1, 1)),
   };
 }
-function aimAt(point) { return aimFrom(camera.position, point, cam.goalTheta); }
+function aimAt(point) { return aimFrom(camera.position, point, cam.theta); }
 
 // 由 (target, theta, phi, radius) 还原机位，给后续段的瞄准反解用
 function stateCamPos(s) {
@@ -1033,20 +1059,39 @@ function angTime(a, b) {
   return (ang / ENGINE.rcs.angMax) * 1.9 + 0.4;
 }
 
-// 主燃+反推时序：对行程 D 取 v = min(方向上限, sqrt(2D·a·b/(a+b)))，
-// 反推行程 v²/2b 反出主燃占比 split；恒加/减速下 easeIn/easeOut 即精确位形
+// 主燃时序：对行程 D 取 v = min(方向上限, sqrt(2D·a·b/(a+b)))。
+// 触顶时中间有匀速巡航段，必须独立成段——加速+巡航合并在一个 easeIn 里
+// 会让段末 goal 速率冲到 2v，仪表读数破引擎上限
 function burnPlan(rFrom, rTo) {
   const m = ENGINE.main;
   const D = Math.abs(rTo - rFrom);
-  if (D < 1e-6) return { split: 0.5, tMain: 0.3, tRetro: 0.3 };
+  if (D < 1e-6) {
+    return { dAcc: 0, dCruise: 0, tAcc: 0.3, tCruise: 0, tRetro: 0.3 };
+  }
   const cap = rTo < rFrom ? m.vFwd : m.vRev;
   const v = Math.min(cap, Math.sqrt((2 * D * m.accel * m.brake) / (m.accel + m.brake)));
+  const dAcc = (v * v) / (2 * m.accel);
   const dRetro = (v * v) / (2 * m.brake);
-  const split = (D - dRetro) / D;
-  // 触到速度上限才有匀速巡航项，否则为零
-  const tMain = v / m.accel
-    + Math.max(0, D - (v * v) / (2 * m.accel) - dRetro) / Math.max(v, 1e-3);
-  return { split, tMain, tRetro: v / m.brake };
+  const dCruise = Math.max(0, D - dAcc - dRetro);
+  return { dAcc, dCruise, tAcc: v / m.accel,
+           tCruise: dCruise / Math.max(v, 1e-3), tRetro: v / m.brake };
+}
+
+// 按 burnPlan 生成 主燃(加速)[+巡航]+反推 段列表；theta 弧线按行程占比扫
+function burnSegs(fromState, arriveState, plan) {
+  const dR = arriveState.radius - fromState.radius;
+  const dT = arriveState.theta - fromState.theta;
+  const D = Math.abs(dR);
+  const fAcc = D > 1e-6 ? plan.dAcc / D : 0.5;
+  const fCru = D > 1e-6 ? (plan.dAcc + plan.dCruise) / D : 0.5;
+  const mid = (f) => ({ ...arriveState, target: arriveState.target.clone(),
+    theta: fromState.theta + dT * f, radius: fromState.radius + dR * f });
+  const segs = [{ to: mid(fAcc), dur: plan.tAcc, ease: easeIn, engine: "main" }];
+  if (plan.tCruise > 0.05) {
+    segs.push({ to: mid(fCru), dur: plan.tCruise, ease: (u) => u, engine: "main" });
+  }
+  segs.push({ to: arriveState, dur: plan.tRetro, ease: easeOut, engine: "retro" });
+  return segs;
 }
 
 // 一次机动拆成四段，对应真实的推进时序：
@@ -1058,12 +1103,7 @@ function flyTo(point, finalRadius, holdSec, arcTheta = 0) {
   aim.theta += arcTheta * 0.25 + rnd(-0.05, 0.05);   // 先把机头摆进弧线
   aim.phi = THREE.MathUtils.clamp(aim.phi + rnd(-0.03, 0.03), 0.3, Math.PI - 0.3);
 
-  // arcTheta 让推进段同时转向，走一条弧线而不是直着往后退；
-  // 恒加速模型在 r 空间是二次曲线×线性插值，切分点直接落在线性 r 上
-  const plan = burnPlan(aim.radius, finalRadius);
-  const cruise = { ...aim, target: aim.target.clone(),
-                   theta: aim.theta + arcTheta * plan.split,
-                   radius: aim.radius + (finalRadius - aim.radius) * plan.split };
+  // arcTheta 让推进段同时转向，走一条弧线而不是直着往后退
   const arrive = { ...aim, target: aim.target.clone(),
                    theta: aim.theta + arcTheta, radius: finalRadius };
   // 入轨漂移量受停留时长与 RCS 角速度上限约束，停留短就少转一点
@@ -1072,9 +1112,8 @@ function flyTo(point, finalRadius, holdSec, arcTheta = 0) {
                     + Math.min(rnd(0.15, 0.35), holdSec * ENGINE.rcs.angMax * 0.6) };
 
   const segs = [
-    { to: aim,    dur: angTime(from, aim), ease: easeSoft, engine: "rcs" },
-    { to: cruise, dur: plan.tMain,         ease: easeIn,   engine: "main" },
-    { to: arrive, dur: plan.tRetro,        ease: easeOut,  engine: "retro" },
+    { to: aim, dur: angTime(from, aim), ease: easeSoft, engine: "rcs" },
+    ...burnSegs(aim, arrive, burnPlan(aim.radius, finalRadius)),
   ];
   if (holdSec > 0) {
     segs.push({ to: orbit, dur: holdSec, ease: (u) => u, engine: "orbit" });
@@ -1093,12 +1132,11 @@ function panorama(holdSec, arcTheta = 0) {
   if (arcTheta) {
     out.applyAxisAngle(FLIP_UP, (Math.random() < 0.5 ? -1 : 1) * rnd(0.5, 0.9));
   }
-  const aim = aimAt(out.multiplyScalar(rnd(150, 260)));
+  // 出口必须在当前机位之外，否则「出系」会变成向心俯冲
+  const exitDist = Math.min(430,
+    Math.max(rnd(150, 260), camera.position.length() * 1.15 + 30));
+  const aim = aimAt(out.multiplyScalar(exitDist));
   const nearR = rnd(5, 9);
-  const plan = burnPlan(aim.radius, nearR);
-  const cruise = { ...aim, target: aim.target.clone(),
-                   theta: aim.theta + arcTheta * plan.split,
-                   radius: aim.radius + (nearR - aim.radius) * plan.split };
   const arrive = { ...aim, target: aim.target.clone(),
                    theta: aim.theta + arcTheta, radius: nearR };
   // 掉头仍是机位反解：注视点回到银心附近，半径自然放大成全景
@@ -1109,11 +1147,10 @@ function panorama(holdSec, arcTheta = 0) {
                   theta: back.theta
                     + Math.min(rnd(0.1, 0.25), holdSec * ENGINE.rcs.angMax * 0.6) };
   return [
-    { to: aim,    dur: angTime(from, aim),    ease: easeSoft, engine: "rcs" },
-    { to: cruise, dur: plan.tMain,            ease: easeIn,   engine: "main" },
-    { to: arrive, dur: plan.tRetro,           ease: easeOut,  engine: "retro" },
-    { to: back,   dur: angTime(arrive, back), ease: easeSoft, engine: "rcs" },
-    { to: orbit,  dur: holdSec,               ease: (u) => u, engine: "orbit" },
+    { to: aim, dur: angTime(from, aim), ease: easeSoft, engine: "rcs" },
+    ...burnSegs(aim, arrive, burnPlan(aim.radius, nearR)),
+    { to: back,  dur: angTime(arrive, back), ease: easeSoft, engine: "rcs" },
+    { to: orbit, dur: holdSec,               ease: (u) => u, engine: "orbit" },
   ];
 }
 
