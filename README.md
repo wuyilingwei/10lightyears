@@ -66,3 +66,7 @@ python3 -m http.server 8000 --directory web
 - Tycho-2 `I/259/tyc2` — Høg et al. 2000
 - Hipparcos new reduction `I/311/hip2` — van Leeuwen 2007
 - 音频特征由 `m-a-p/MERT-v1-95M` 提取
+
+## 致谢
+
+部分界面灵感来自《X4: Foundations》《Stellaris》等太空游戏。

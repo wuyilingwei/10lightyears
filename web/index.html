@@ -53,18 +53,19 @@
     transition: opacity .24s ease;
   }
   #leader { stroke-width: 1; stroke-dasharray: 3 4; }
-  #ring { stroke-width: 4.2; }
-  #ring-glow { stroke-width: 9; }
-  #hover-ring { stroke-width: 4.2; transition: opacity .12s ease; }
+  #ring { stroke-width: 1.4; }
+  #ring-glow { stroke-width: 4; }
+  #hover-ring { stroke-width: 1.4; transition: opacity .12s ease; }
   #link-layer.sel #leader { opacity: .62; }
   #link-layer.sel #ring { opacity: 1; }
-  #link-layer.sel #ring-glow { opacity: .12; }
+  #link-layer.sel #ring-glow { opacity: .16; }
   #link-layer.hov #hover-ring { opacity: .4; }
   #ring-dist {
     fill: var(--accent); font-size: .58rem; letter-spacing: .12em;
     font-variant-numeric: tabular-nums;
     opacity: 0; transition: opacity .24s ease;
   }
+  #ring-cls { font-weight: 700; }   /* 恒星类型字母，颜色由光谱色内联给出 */
   #link-layer.sel #ring-dist { opacity: .9; }
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
@@ -172,6 +173,9 @@
   body.fake-land #panel-right { right: 8vh;
     transform: perspective(1100px) rotateY(var(--tilt-r));
     transform-origin: right center; }
+  /* 伪横屏下视口单位互换：逻辑横向用 vh、纵向用 vw */
+  body.fake-land #search-box { width: min(22rem, 26vh); }
+  body.fake-land #results { max-height: 40vw; }
 
   #cover {
     width: 100%; aspect-ratio: 16 / 10; position: relative; overflow: hidden;
@@ -205,6 +209,8 @@
   }
   .field.hot b { color: var(--accent); }
   .field.warm b { color: var(--accent-warm); }
+  /* 光谱串可能很长（如复合型），禁止省略号折叠，允许换行 */
+  #f-sp { white-space: normal; word-break: break-all; line-height: 1.35; }
   .track-only { display: none; }
   body.has-sel .track-only { display: block; }
   .field.bgm { display: none; }
@@ -375,7 +381,8 @@
 
   /* 伪横屏提示浮窗：右上角小胶囊（旋转后坐标系），金色边线 */
   #rotate-toast {
-    position: fixed; right: 1rem; top: 1rem; z-index: 12;
+    /* 让开右上角站标（≤900 时缩为 2rem 图标贴 .7rem） */
+    position: fixed; right: 1rem; top: 3.4rem; z-index: 12;
     padding: .4rem .9rem;
     background: rgba(8, 14, 26, .78); color: var(--accent);
     border: 1px solid rgba(242, 200, 75, .5); border-radius: 999px;
@@ -397,7 +404,6 @@
               border-bottom: 1px solid rgba(242, 200, 75, .22); transition: color .2s; }
   #footer a:hover { color: var(--accent); border-bottom-color: var(--accent); }
   #footer .sep { opacity: .45; margin: 0 .45rem; }
-  #footer .thanks { margin-top: .3rem; opacity: .8; }
 
   #loading {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
@@ -463,7 +469,7 @@
     #tooltip { display: none; }
     /* 虚拟摇杆：两侧内收、中线下移，落在楔形面板让出的空区 */
     .joy {
-      display: block; position: fixed; top: 62%; transform: translateY(-50%);
+      display: block; position: fixed; top: 68%; transform: translateY(-50%);
       width: 6.5rem; height: 6.5rem; z-index: 8; border-radius: 50%;
       border: 1px solid rgba(242, 200, 75, .2);
       background: radial-gradient(circle, rgba(9, 15, 28, .3), rgba(9, 15, 28, .1) 72%);
@@ -485,7 +491,7 @@
 
   /* 窄横屏摇杆避让：缩小、内收并下移，绕开槽位行与楔形面板 */
   @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
-    .joy { width: 5.6rem; height: 5.6rem; top: 60%; }
+    .joy { width: 5.6rem; height: 5.6rem; top: 66%; }
     .joy-nub { width: 2.2rem; height: 2.2rem; }
     #joy-left { left: 2.6rem; }
     #joy-right { right: 2.6rem; }
@@ -495,7 +501,7 @@
 
   /* 伪横屏摇杆：等价窄横屏（旋转后的横向宽度即物理高度） */
   @media (max-height: 1100px) {
-    body.fake-land .joy { width: 5.6rem; height: 5.6rem; top: 60%; }
+    body.fake-land .joy { width: 5.6rem; height: 5.6rem; top: 66%; }
     body.fake-land .joy-nub { width: 2.2rem; height: 2.2rem; }
     body.fake-land #joy-left { left: 2.6rem; }
     body.fake-land #joy-right { right: 2.6rem; }
@@ -508,11 +514,11 @@
 <canvas id="stage"></canvas>
 
 <svg id="reticle" viewBox="0 0 148 148" aria-hidden="true">
-  <!-- 上下各 120°，左右各留 60° 缺口 -->
-  <path d="M129.15,83.72 A56 56 0 0 1 83.72,129.15"/>
-  <path d="M64.28,129.15 A56 56 0 0 1 18.85,83.72"/>
-  <path d="M18.85,64.28 A56 56 0 0 1 64.28,18.85"/>
-  <path d="M83.72,18.85 A56 56 0 0 1 129.15,64.28"/>
+  <!-- 上下左右四缺口各 60°，四段弧各 30° -->
+  <path d="M122.50,102.00 A56 56 0 0 1 102.00,122.50"/>
+  <path d="M46.00,122.50 A56 56 0 0 1 25.50,102.00"/>
+  <path d="M25.50,46.00 A56 56 0 0 1 46.00,25.50"/>
+  <path d="M102.00,25.50 A56 56 0 0 1 122.50,46.00"/>
   <circle cx="74" cy="74" r="3"/>
 </svg>
 
@@ -521,7 +527,7 @@
   <polygon id="ring-glow"></polygon>
   <polygon id="ring"></polygon>
   <polygon id="hover-ring"></polygon>
-  <text id="ring-dist"></text>
+  <text id="ring-dist"><tspan id="ring-cls"></tspan><tspan id="ring-ly"></tspan></text>
 </svg>
 
 <svg id="hud" aria-hidden="true">
@@ -650,7 +656,6 @@
      target="_blank" rel="noopener">开源仓库</a>
   <span class="sep">/</span><a href="https://www.cloudflare.com/"
      target="_blank" rel="noopener">Powered by Cloudflare</a>
-  <div class="thanks">部分界面灵感来自《X4: Foundations》《Stellaris》等太空游戏</div>
 </div>
 
 <div id="loading">
