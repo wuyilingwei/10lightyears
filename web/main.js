@@ -155,11 +155,20 @@ function pan(dt) {
     (held.has("up") ? step : 0) - (held.has("down") ? step : 0));
 }
 
+// 滚轮不直接改半径，而是喂给一个会衰减的缩放速度，滑起来有惯性
+let zoomVel = 0;
+const ZOOM_KEEP = 0.006;   // 每秒保留比例
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
-  cam.goalRadius = THREE.MathUtils.clamp(
-    cam.goalRadius * Math.exp(e.deltaY * 0.0014), cam.minRadius, cam.maxRadius);
+  zoomVel += e.deltaY * 0.0016;
 }, { passive: false });
+
+function stepZoom(dt) {
+  if (Math.abs(zoomVel) < 1e-4) { zoomVel = 0; return; }
+  cam.goalRadius = THREE.MathUtils.clamp(
+    cam.goalRadius * Math.exp(zoomVel * dt * 5), cam.minRadius, cam.maxRadius);
+  zoomVel *= Math.pow(ZOOM_KEEP, dt);
+}
 
 /* ── 光谱型 -> 恒星颜色 ──────────────────────────────
    横轴与数据里的 sp_axis 一致：O=0, B=1, A=2, F=3, G=4, K=5, M=6，
@@ -705,6 +714,42 @@ function mountPlayer(i) {
   elCover.appendChild(frame);
 }
 
+/* ── 显示选项 ───────────────────────────────────────
+   存进 localStorage，刷新后不用重设 */
+const optBtn = document.getElementById("opt-btn");
+const optsBox = document.getElementById("opts");
+const OPTS = {
+  reticle: ["o-reticle", "no-reticle", true],
+  targets: ["o-targets", "no-targets", true],
+  footer: ["o-footer", "no-footer", true],
+  spin: ["o-spin", null, true],
+  safe: ["o-safe", null, false],
+};
+const opt = {};
+
+function applyOpt(key) {
+  const [id, cls] = OPTS[key];
+  const el = document.getElementById(id);
+  opt[key] = el.checked;
+  if (cls) document.body.classList.toggle(cls, !el.checked);
+  try { localStorage.setItem(`hud.${key}`, el.checked ? "1" : "0"); } catch { /* 隐私模式 */ }
+}
+
+for (const key of Object.keys(OPTS)) {
+  const [id, , def] = OPTS[key];
+  const el = document.getElementById(id);
+  let saved = null;
+  try { saved = localStorage.getItem(`hud.${key}`); } catch { /* 隐私模式 */ }
+  el.checked = saved === null ? def : saved === "1";
+  el.addEventListener("change", () => applyOpt(key));
+  applyOpt(key);
+}
+
+optBtn.addEventListener("click", () => {
+  optsBox.classList.toggle("on");
+  optBtn.classList.toggle("on", optsBox.classList.contains("on"));
+});
+
 /* ── 自动巡游 ───────────────────────────────────────
    两类动作轮换：聚焦某颗星（10s）、或在一定范围内随机移动/旋转（5-10s）。
    连续聚焦时有 25% 概率跳到相近曲目，让巡游沿着曲风网络走一段。 */
@@ -1023,11 +1068,12 @@ function layoutHud() {
 }
 
 let shownSpeed = 0;
-function updateHud(signedSpeed) {
+function updateHud(signedSpeed, dt) {
   if (!hudGeom) return;
   const { cx, cy, rSpeed } = hudGeom;
 
-  shownSpeed += (signedSpeed - shownSpeed) * 0.15;
+  // 阻尼：时间常数固定，指针跟得慢一点、有配重感
+  shownSpeed += (signedSpeed - shownSpeed) * (1 - Math.pow(0.05, dt));
   // 开方压缩量程，低速段才有分辨率；符号决定落在中点的哪一侧
   const mag = THREE.MathUtils.clamp(Math.sqrt(Math.abs(shownSpeed) / SPEED_FULL), 0, 1);
   const f = Math.sign(shownSpeed) * mag;
@@ -1093,7 +1139,8 @@ function frame(now) {
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
   stepAuto();
-  if (!dragging && held.size === 0 && !auto.on) cam.goalTheta += dt * 0.012;  // 缓慢自转
+  if (opt.spin && !dragging && held.size === 0 && !auto.on) cam.goalTheta += dt * 0.012;
+  stepZoom(dt);
   pan(dt);
   applyCamera(dt);
   project();
@@ -1113,12 +1160,12 @@ function frame(now) {
   const signedSpeed = radRate > totalSpeed * 0.25 ? -totalSpeed : totalSpeed;
   lastCamPos.copy(camera.position);
   starMat.uniforms.uCamVel.value.copy(camVel);
-  updateHud(signedSpeed);
+  updateHud(signedSpeed, dt);
 
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
     TRAIL_K * Math.pow(excess, TRAIL_EXP), 0, TRAIL_MAX);
-  decay = THREE.MathUtils.clamp(
+  decay = opt.safe ? 0 : THREE.MathUtils.clamp(
     decay + (want - decay) * (1 - Math.pow(0.002, dt)), 0, TRAIL_MAX);
 
   // 上一帧衰减后写入 rtNext，场景以 (1-decay) 的增益叠加其上
