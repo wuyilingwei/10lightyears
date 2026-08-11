@@ -17,9 +17,10 @@
     --ring-r: 15px;
     --panel-l: 22rem;
     --panel-r: 20rem;
-    /* rotateY 正角把元素左缘转近观察者：左板取负让右(内)缘近，右板取正让左(内)缘近 */
-    --tilt-l: -7deg;
-    --tilt-r: 7deg;
+    /* rotateY 正角把左缘转近观察者：左板取正让内(右)缘转远，
+       透视上内侧显得更窄更远，配合剪影的「内窄上提」 */
+    --tilt-l: 8.5deg;
+    --tilt-r: -8.5deg;
   }
 
   * { box-sizing: border-box; }
@@ -62,11 +63,11 @@
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
-    position: fixed; left: 50%; top: 50%; width: 30px; height: 30px;
+    position: fixed; left: 50%; top: 50%; width: 15px; height: 15px;
     transform: translate(-50%, -50%);
     z-index: 4; pointer-events: none;
   }
-  #reticle path { fill: none; stroke: var(--reticle); stroke-width: 5;
+  #reticle path { fill: none; stroke: var(--reticle); stroke-width: 20;
                   opacity: .42; stroke-linecap: round; }
   #reticle circle { fill: var(--reticle); opacity: .55; }
 
@@ -91,13 +92,14 @@
     display: flex; flex-direction: column; align-items: center; gap: .26rem;
     pointer-events: none; text-align: center;
   }
-  #hud-icons { display: flex; gap: .7rem; }
-  .ic { display: flex; flex-direction: column; align-items: center; gap: .12rem;
+  #hud-icons { display: flex; gap: .8rem; }
+  .ic { display: flex; flex-direction: column; align-items: center; gap: .14rem;
         opacity: .22; transition: opacity .2s, filter .2s; }
-  .ic svg { width: 1.2rem; height: 1.2rem; fill: none; stroke: var(--accent);
-            stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-  .ic .lb { font-style: normal; font-size: .44rem; letter-spacing: .16em;
-            color: var(--text-dim); }
+  .ic svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: var(--accent);
+            stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .ic .fl { fill: var(--accent); stroke: none; }
+  .ic .lb { font-style: normal; font-size: .5rem; line-height: 1;
+            letter-spacing: .08em; color: var(--accent); }
   .ic.on { opacity: 1; filter: drop-shadow(0 0 5px rgba(242,200,75,.7)); }
   .ic.on .lb { color: var(--accent); }
   #ic-rev.on svg { stroke: #ff9a6b; }
@@ -137,20 +139,25 @@
     vector-effect: non-scaling-stroke;
   }
 
-  /* 透视朝向：内侧边（左板右缘、右板左缘）转近观察者，如朝驾驶员倾斜的操作台 */
+  /* 外侧边全高，内侧边贴上缘收短；底边向屏幕中心上扫约 22°。
+     下方楔形会侵入内容区，底部留白按最大侵入量给足 */
   #panel-left {
     left: 8vw; width: var(--panel-r);
-    clip-path: polygon(0 8%, 100% 0, 100% 92%, 0 100%);
-    transform: perspective(1100px) rotateY(var(--tilt-l));
-    padding: 1.3rem 1.5rem 1.4rem .9rem;
+    clip-path: polygon(0 0, 100% 6%, 100% 52%, 0 100%);
+    padding: 1.3rem 1.4rem 8.2rem 1.1rem;
     display: flex; flex-direction: column; gap: .32rem;
   }
   #panel-right {
     right: 8vw; width: var(--panel-l);
-    clip-path: polygon(0 0, 100% 8%, 100% 100%, 0 92%);
-    transform: perspective(1100px) rotateY(var(--tilt-r));
-    padding: .8rem .8rem 1.1rem 1.4rem;
+    clip-path: polygon(0 6%, 100% 0, 100% 100%, 0 52%);
+    padding: 1.4rem 1rem 8.9rem 1.3rem;
     min-height: 14rem;
+  }
+  @media (orientation: landscape) {
+    #panel-left { transform: perspective(1100px) rotateY(var(--tilt-l));
+                  transform-origin: left center; }
+    #panel-right { transform: perspective(1100px) rotateY(var(--tilt-r));
+                   transform-origin: right center; }
   }
 
   #cover {
@@ -310,6 +317,21 @@
     text-shadow: 0 0 8px rgba(242, 200, 75, .35);
   }
 
+  /* 全屏按钮：不依赖同族共享选择器 */
+  #fs-btn {
+    display: flex; align-items: center; padding: .4rem .62rem;
+    background: rgba(8, 14, 26, .7); color: var(--text-dim);
+    border: 1px solid rgba(242, 200, 75, .26); border-radius: 999px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    font: inherit; cursor: pointer;
+    transition: color .2s, border-color .2s;
+  }
+  #fs-btn[hidden] { display: none; }
+  #fs-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
+  #fs-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
+  #fs-btn .fs-out, #fs-btn.on .fs-in { display: none; }
+  #fs-btn.on .fs-out { display: inline; }
+
   #opts {
     display: none; flex-direction: column; gap: .34rem;
     padding: .6rem .8rem;
@@ -396,9 +418,9 @@
 
   @media (max-width: 1100px) and (orientation: landscape) {
     :root { --panel-l: 15rem; --panel-r: 13rem; }
-    #panel-left { left: 3vw; }
-    #panel-right { right: 3vw; min-height: 11rem; }
-    #reticle { width: 100px; height: 100px; }
+    #panel-left { left: 3vw; padding-bottom: 5.2rem; }
+    #panel-right { right: 3vw; min-height: 11rem; padding-bottom: 6rem; }
+    #reticle { width: 50px; height: 50px; }
     #footer { display: none; }
     .target { width: 10rem; }
     /* 按钮区允许换行，给后续新增按钮留余量 */
@@ -460,7 +482,7 @@
   <path d="M64.28,129.15 A56 56 0 0 1 18.85,83.72"/>
   <path d="M18.85,64.28 A56 56 0 0 1 64.28,18.85"/>
   <path d="M83.72,18.85 A56 56 0 0 1 129.15,64.28"/>
-  <circle cx="74" cy="74" r="1.6"/>
+  <circle cx="74" cy="74" r="3"/>
 </svg>
 
 <svg id="link-layer" aria-hidden="true">
@@ -484,27 +506,31 @@
 <div id="hud-labels">
   <div id="hud-icons">
     <span class="ic" id="ic-main" title="主推进引擎">
-      <svg viewBox="0 0 16 16"><path d="M6 1.5h4l1.6 4H4.4z"/>
-        <path d="M5.2 7.5C5.5 10 6.4 12.4 8 14.5c1.6-2.1 2.5-4.5 2.8-7"/>
-        <path d="M7.1 7.5c.1 1.3.4 2.4.9 3.5.5-1.1.8-2.2.9-3.5"/></svg>
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2c2.7 2.3 3.5 5.5 3.5 8.6V14h-7v-3.4C8.5 7.5 9.3 4.3 12 2z"/>
+        <path d="M8.5 10.6 6 13.8V16h2.5M15.5 10.6l2.5 3.2V16h-2.5"/>
+        <path d="M12 16.6V21M8.7 16.6 7 20.2M15.3 16.6 17 20.2"/></svg>
       <i class="lb">主推</i></span>
-    <span class="ic" id="ic-rcs" title="姿态控制">
-      <svg viewBox="0 0 16 16"><rect x="6.4" y="6.4" width="3.2" height="3.2"/>
-        <path d="M6.8 2.4 8 5l1.2-2.6"/><path d="M6.8 13.6 8 11l1.2 2.6"/>
-        <path d="M2.4 6.8 5 8l-2.6 1.2"/><path d="M13.6 6.8 11 8l2.6 1.2"/></svg>
+    <span class="ic" id="ic-rcs" title="姿态喷口">
+      <svg viewBox="0 0 24 24">
+        <rect x="8.6" y="8.6" width="6.8" height="6.8"/>
+        <path d="M9.4 5.4 12 2.8l2.6 2.6M9.4 18.6 12 21.2l2.6-2.6"/>
+        <path d="M5.4 9.4 2.8 12l2.6 2.6M18.6 9.4 21.2 12l-2.6 2.6"/></svg>
       <i class="lb">姿态</i></span>
-    <span class="ic" id="ic-auto" title="自动巡航">
-      <svg viewBox="0 0 16 16"><path d="M10.2 3.3A5.2 5.2 0 1 1 5.8 3.3"/>
-        <path d="M7.6 1.5 9.4 2.8 7.6 4.1"/>
-        <circle cx="3.5" cy="10.6" r="1"/><circle cx="12.5" cy="10.6" r="1"/></svg>
+    <span class="ic" id="ic-auto" title="自动驾驶">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.6"/>
+        <path class="fl" d="M16 8 13.4 13.4 8 16l2.6-5.4z"/></svg>
       <i class="lb">自动</i></span>
     <span class="ic" id="ic-lock" title="目标锁定">
-      <svg viewBox="0 0 16 16"><path d="M2.5 5.5v-3h3M13.5 5.5v-3h-3M2.5 10.5v3h3M13.5 10.5v3h-3"/>
-        <circle cx="8" cy="8" r="1.5"/></svg>
+      <svg viewBox="0 0 24 24">
+        <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/>
+        <circle class="fl" cx="12" cy="12" r="2.7"/></svg>
       <i class="lb">锁定</i></span>
-    <span class="ic" id="ic-rev" title="反推">
-      <svg viewBox="0 0 16 16"><path d="M4 2h8"/>
-        <path d="M3.8 5 8 8.6 12.2 5"/><path d="M3.8 9.6 8 13.2 12.2 9.6"/></svg>
+    <span class="ic" id="ic-rev" title="反向推进">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2.6v7.6M8.4 6.6l3.6 3.6 3.6-3.6"/>
+        <path d="M12 13.4 16.6 21H7.4z"/></svg>
       <i class="lb">反推</i></span>
   </div>
 </div>
@@ -512,7 +538,7 @@
 
 <div id="panel-left" class="hud-panel on">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,8 100,0 100,92 0,100"/>
+    <polygon points="0,0 100,6 100,52 0,100"/>
   </svg>
   <div class="track-only"><div class="field"><span>UP 主</span><b id="f-author"></b></div></div>
   <div class="track-only"><div class="field"><span>投稿</span><b id="f-date"></b></div></div>
@@ -526,7 +552,7 @@
 
 <div id="panel-right" class="hud-panel">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,0 100,8 100,100 0,92"/>
+    <polygon points="0,6 100,0 100,100 0,52"/>
   </svg>
   <div id="cover">
     <img class="glyph" src="./icon.svg" alt="" width="44" height="44">
@@ -582,6 +608,13 @@
         <div id="results"></div>
       </div>
     </div>
+    <button id="fs-btn" type="button" aria-label="全屏" hidden>
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
+           stroke="currentColor" stroke-width="1.5">
+        <path class="fs-in" d="M6 2.5H2.5V6M10 2.5h3.5V6M13.5 10v3.5H10M2.5 10v3.5H6"/>
+        <path class="fs-out" d="M6 2.5V6H2.5M10 2.5V6h3.5M13.5 10H10v3.5M2.5 10H6v3.5"/>
+      </svg>
+    </button>
   </div>
   <div id="opts">
     <label><input type="checkbox" id="o-reticle" checked>中央指示器</label>

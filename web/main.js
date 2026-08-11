@@ -722,33 +722,40 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-/* 面板平行四边形：两板共用同一屏幕斜率（内侧边高、外侧边矮），
-   高度差按各自实测宽高比换算；rotateY 之后 getBoundingClientRect
-   是投影后的包围盒，必须用 offsetWidth/offsetHeight */
-const PANEL_SLOPE = 0.14;                                    // tan(倾角)
+/* 面板剪影：顶边微斜、底边向屏幕中心上扫，两个角度恒定，与面板尺寸无关。
+   剪影和描边多边形共用同一组顶点；空板高度不足时内侧边收缩成尖角。 */
+const PANEL_TOP_DEG = 3.2;
+const PANEL_BOT_DEG = 22;
+const panelPortrait = matchMedia("(max-width: 900px) and (orientation: portrait)");
 
 function syncSkew() {
-  const root = document.documentElement.style;
-  for (const [el, skewVar, sign] of [
-    [panelLeft, "--skew-l", -1],
-    [panelRight, "--skew-r", 1],
-  ]) {
+  for (const [el, innerRight] of [[panelLeft, true], [panelRight, false]]) {
+    // 竖屏走矩形卡片布局，交还给样式表
+    if (panelPortrait.matches) { el.style.clipPath = ""; continue; }
+    // rotateY 下 getBoundingClientRect 是投影包围盒，必须用 offset 尺寸
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) continue;
-    // 高度不足以达到统一斜率时收在 45%，内容倾角跟随实际边缘
-    const d = Math.min(((PANEL_SLOPE * w) / h) * 100, 45);
-    const skew = (Math.atan(((d / 100) * h) / w) * 180) / Math.PI;
-    const lo = d.toFixed(2), hi = (100 - d).toFixed(2);
-    // sign<0 为左板：右缘是内侧边；右板镜像
-    el.style.clipPath = sign < 0
-      ? `polygon(0 ${lo}%, 100% 0, 100% ${hi}%, 0 100%)`
-      : `polygon(0 0, 100% ${lo}%, 100% 100%, 0 ${hi}%)`;
-    el.querySelector(".panel-edge polygon")?.setAttribute("points", sign < 0
-      ? `0,${lo} 100,0 100,${hi} 0,100`
-      : `0,0 100,${lo} 100,100 0,${hi}`);
-    root.setProperty(skewVar, `${(sign * skew).toFixed(2)}deg`);
+    const drop = Math.min(w * Math.tan((PANEL_TOP_DEG * Math.PI) / 180), h);
+    const sweep = w * Math.tan((PANEL_BOT_DEG * Math.PI) / 180);
+    const yB = Math.max(h - sweep, drop);
+    const pts = innerRight
+      ? [[0, 0], [w, drop], [w, yB], [0, h]]
+      : [[0, drop], [w, 0], [w, h], [0, yB]];
+    el.style.clipPath =
+      `polygon(${pts.map(([x, y]) => `${x}px ${y.toFixed(1)}px`).join(", ")})`;
+    const edge = el.querySelector(".panel-edge");
+    edge.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    edge.firstElementChild.setAttribute("points",
+      pts.map(([x, y]) => `${x},${y.toFixed(1)}`).join(" "));
   }
+  // 内容保持水平排版，变量留作内容倾角接口
+  document.documentElement.style.setProperty("--skew-l", "0deg");
+  document.documentElement.style.setProperty("--skew-r", "0deg");
 }
+// 面板高度随内容增减，剪影要跟着重算
+const panelRO = new ResizeObserver(() => syncSkew());
+panelRO.observe(panelLeft);
+panelRO.observe(panelRight);
 
 // 触屏窄横屏时槽位弧向内收，给两侧边缘的摇杆让位
 function targetArcR() {
@@ -1594,3 +1601,21 @@ function frame(now) {
 
 document.getElementById("loading").classList.add("done");
 requestAnimationFrame(frame);
+
+/* ── 全屏 ───────────────────────────────────────────── */
+const fsBtn = document.getElementById("fs-btn");
+if (document.documentElement.requestFullscreen) {
+  fsBtn.hidden = false;
+  fsBtn.addEventListener("click", () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      document.documentElement.requestFullscreen()
+        .then(() => screen.orientation?.lock?.("landscape")?.catch(() => {}))
+        .catch(() => {});
+    }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    fsBtn.classList.toggle("on", !!document.fullscreenElement);
+  });
+}
