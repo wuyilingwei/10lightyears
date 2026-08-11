@@ -273,24 +273,42 @@
               text-shadow: 0 0 26px rgba(242,200,75,.45); }
   #brand p { margin: .38rem 0 0; font-size: .58rem; letter-spacing: .22em; color: var(--text-dim); }
 
-  /* 巡游按钮：常规圆角胶囊 */
+  /* 左上控制区：模式切换器 + 圆角胶囊按钮 */
   #controls {
     position: fixed; left: 2.4rem; top: 1.9rem; z-index: 9;
     display: flex; flex-direction: column; align-items: flex-start; gap: .5rem;
   }
   #ctl-row { display: flex; gap: .5rem; }
-  #auto-btn, #wander-btn, #opt-btn, #search-btn {
+  #opt-btn, #search-btn {
     display: flex; align-items: center; gap: .45rem;
-    padding: .4rem .9rem .4rem .75rem;
+    padding: .4rem .9rem;
     background: rgba(8, 14, 26, .7); color: var(--text-dim);
     border: 1px solid rgba(242, 200, 75, .26); border-radius: 999px;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     font: inherit; font-size: .62rem; letter-spacing: .12em; cursor: pointer;
     transition: color .2s, border-color .2s;
   }
-  #auto-btn:hover, #wander-btn:hover, #opt-btn:hover, #search-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
-  #opt-btn { padding: .4rem .9rem; }
+  #opt-btn:hover, #search-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
   #opt-btn.on, #search-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
+
+  /* 三段式模式切换：连体分段胶囊，内部分隔线，.cur 金色高亮 */
+  #mode-switch {
+    display: flex; flex: none; border-radius: 999px; overflow: hidden;
+    background: rgba(8, 14, 26, .7);
+    border: 1px solid rgba(242, 200, 75, .26);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  #mode-switch button {
+    padding: .4rem .8rem; border: 0; background: none; color: var(--text-dim);
+    font: inherit; font-size: .62rem; letter-spacing: .12em; cursor: pointer;
+    transition: color .2s, background .25s;
+  }
+  #mode-switch button + button { border-left: 1px solid rgba(242, 200, 75, .18); }
+  #mode-switch button:hover { color: var(--text); }
+  #mode-switch button.cur {
+    color: var(--accent); background: rgba(242, 200, 75, .12);
+    text-shadow: 0 0 8px rgba(242, 200, 75, .35);
+  }
 
   #opts {
     display: none; flex-direction: column; gap: .34rem;
@@ -308,14 +326,6 @@
   body.no-reticle #reticle,
   body.no-targets #targets, body.no-targets #hud .tgt-arc,
   body.no-footer #footer { display: none; }
-  #auto-btn::before, #wander-btn::before {
-    content: ""; width: .45rem; height: .45rem; border-radius: 50%;
-    background: var(--text-dim); transition: background .25s, box-shadow .25s;
-  }
-  body.auto #auto-btn { color: var(--accent); border-color: rgba(242, 200, 75, .6); }
-  body.auto #auto-btn::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  body.wander #wander-btn { color: var(--accent); border-color: rgba(242, 200, 75, .6); }
-  body.wander #wander-btn::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
   body.auto #search-wrap, body.auto #footer,
   body.wander #search-wrap, body.wander #footer { opacity: 0; pointer-events: none; }
   #search-wrap, #footer { transition: opacity .4s ease; }
@@ -554,8 +564,11 @@
 
 <div id="controls">
   <div id="ctl-row">
-    <button id="auto-btn" type="button">自动巡游</button>
-    <button id="wander-btn" type="button">漫游</button>
+    <div id="mode-switch">
+      <button id="mode-manual" type="button" class="cur">手动</button>
+      <button id="mode-cruise" type="button">巡游</button>
+      <button id="mode-wander" type="button">漫游</button>
+    </div>
     <button id="opt-btn" type="button">显示</button>
     <div id="search-wrap">
       <button id="search-btn" type="button" aria-label="搜索">
