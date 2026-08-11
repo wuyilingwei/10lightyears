@@ -65,7 +65,9 @@ const cam = {
   // 起始视距放远，先看到整个盘的形状；场景总尺度约 335 单位
   theta: 0.7, phi: 1.22, radius: 160,
   goalTheta: 0.7, goalPhi: 1.22, goalRadius: 160,
-  minRadius: 2, maxRadius: 420,
+  // 下限须留在固定逼近距离（8.12 ly ≈ 0.68 su）之下，否则辅助驾驶停稳后
+  // 任意一次捏合缩放都会把半径钳向 minRadius，产生一次跳变式的镜头外甩
+  minRadius: 0.5, maxRadius: 420,
   roll: 0,   // 纯视觉滚转（rad），只改 up 向量，不进 goal 追赶体系
 };
 const camDir = new THREE.Vector3();
@@ -204,7 +206,7 @@ canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   const pos = evPos(e);
   pointers.set(e.pointerId,
-    { x: pos.x, y: pos.y, moved: 0, type: e.pointerType, role });
+    { x: pos.x, y: pos.y, moved: 0, type: e.pointerType, role, downAt: performance.now() });
   dragging = true;
   resetPinch();
   clearHover();                 // 拖拽期间不更新悬停，留着会是个跟错星的虚框
@@ -537,7 +539,8 @@ function joyStep(dt) {
    与右摇杆共用 att.inYaw/inPitch 这条输入线路，每帧读当前指针位置。 */
 const elSteerLine = document.getElementById("steer-line");
 const elSteerDot = document.getElementById("steer-dot");
-const STEER_DEAD = 10;   // px，中心附近的死区，免得手抖乱转
+const STEER_DEAD = 10;    // px，中心附近的死区，免得手抖乱转
+const STEER_GRACE = 180;  // ms，按下多久才开始转向，普通点按（约50-300ms）不会误转
 
 function pointerSteerStep() {
   // 单指/右键持续按住时才转向；捏合（两指）与左键选中都不算
@@ -557,7 +560,8 @@ function pointerSteerStep() {
   elSteerLine.setAttribute("x1", cx.toFixed(1)); elSteerLine.setAttribute("y1", cy.toFixed(1));
   elSteerLine.setAttribute("x2", p.x.toFixed(1)); elSteerLine.setAttribute("y2", p.y.toFixed(1));
   elSteerDot.setAttribute("cx", p.x.toFixed(1)); elSteerDot.setAttribute("cy", p.y.toFixed(1));
-  if (dist < STEER_DEAD) return;
+  // 宽限期内只显示指向线（给按住的反馈），不写入转向，靠近边缘的轻点才不会带出一次机身偏转
+  if (dist < STEER_DEAD || performance.now() - p.downAt < STEER_GRACE) return;
   // 死区外线性爬升到量程半径的 35% 处封顶，方向即光标偏移方向
   const R = 0.35 * Math.min(vw(), vh());
   const f = Math.min((dist - STEER_DEAD) / (R - STEER_DEAD), 1);
@@ -2137,7 +2141,15 @@ const helpModal = document.getElementById("help-modal");
 const helpClose = document.getElementById("help-close");
 const helpOpen = document.getElementById("help-open");
 
-function openHelp() { helpModal.hidden = false; }
+// 弹窗只挡「新」输入（捕获阶段 keydown + 遮罩挡 canvas 指针），
+// 已经按住的键、已经设定的档位不会被冻结——开窗时顺手清掉，
+// 免得飞船在弹窗背后继续滚转/巡航
+function openHelp() {
+  helpModal.hidden = false;
+  held.clear();
+  throttle.gear = 0; throttle.v = 0;
+  midHeld = false; steerCenter = false; clearTimeout(midTimer);
+}
 function closeHelp() { helpModal.hidden = true; }
 
 helpClose.addEventListener("click", closeHelp);
