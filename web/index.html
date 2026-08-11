@@ -32,7 +32,14 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  #stage { position: fixed; inset: 0; display: block; }
+  /* canvas 是替换元素：position:fixed+inset:0 单独并不会把它撑满视口——
+     没有显式 width/height 时它会回落到自身的 width/height 内容属性
+     （renderer.setSize 写入的是设备像素，如 904 CSS px 视口在 dpr=2 下
+     会写成 1808），于是画布的 CSS 渲染尺寸变成设备像素数值本身，比真实
+     视口大了 dpr 倍——画面等于被放大裁切，WebGL 渲的光点位置和 SVG
+     覆盖层（用真实视口算的 project()）对不上，正是"渲染偏移"的根因。
+     显式给 100%/100% 才能让它真正撑满视口，不回落到属性值。 */
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   #nebula {
     position: fixed; inset: 0; z-index: -1; pointer-events: none;
@@ -704,13 +711,17 @@
   #splash-card {
     position: relative; z-index: 1;
     width: min(28rem, 88vw);
+    max-height: 90vh; overflow-y: auto;
     padding: 2.4rem 2rem 2rem;
     background: linear-gradient(160deg, rgba(10,17,31,.92), rgba(7,11,21,.88));
     border: 1px solid rgba(242, 200, 75, .32); border-radius: 16px;
     backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
     text-align: center;
     animation: splash-in .9s ease both;
+    scrollbar-width: thin; scrollbar-color: rgba(242,200,75,.3) transparent;
   }
+  #splash-card::-webkit-scrollbar { width: 4px; }
+  #splash-card::-webkit-scrollbar-thumb { background: rgba(242,200,75,.3); border-radius: 2px; }
   @keyframes splash-in {
     from { opacity: 0; transform: translateY(18px); }
   }
@@ -773,6 +784,28 @@
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 0 4px rgba(242,200,75,.1), 0 0 16px rgba(242,200,75,.1); }
   }
+  /* 横屏短视口：隐 logo、压缩间距与字号 */
+  @media (max-height: 560px) {
+    #splash-card { padding: 1.1rem 1.6rem 1.2rem; }
+    .splash-era { margin-bottom: .4rem; }
+    .splash-logo { display: none; }
+    .splash-title { font-size: 1.25rem; margin-bottom: .15rem; }
+    .splash-site { margin-bottom: .7rem; }
+    .splash-verse { margin-bottom: .6rem; font-size: .64rem; line-height: 1.75; }
+    .splash-rule { margin-bottom: .6rem; }
+    .splash-credits { margin-bottom: .6rem; }
+    .splash-notice { margin-bottom: .9rem; padding: .4rem .7rem; }
+  }
+  /* 伪横屏：可用高度 = vw（物理短边） */
+  body.fake-land #splash-card { padding: 1.1rem 1.6rem 1.2rem; max-height: 88vw; }
+  body.fake-land .splash-logo { display: none; }
+  body.fake-land .splash-title { font-size: 1.25rem; margin-bottom: .15rem; }
+  body.fake-land .splash-era { margin-bottom: .4rem; }
+  body.fake-land .splash-site { margin-bottom: .7rem; }
+  body.fake-land .splash-verse { margin-bottom: .6rem; font-size: .64rem; line-height: 1.75; }
+  body.fake-land .splash-rule { margin-bottom: .6rem; }
+  body.fake-land .splash-credits { margin-bottom: .6rem; }
+  body.fake-land .splash-notice { margin-bottom: .9rem; padding: .4rem .7rem; }
 </style>
 </head>
 <body>
