@@ -901,9 +901,10 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-/* 面板剪影：顶边微斜、底边向屏幕中心上扫，两个角度恒定，与面板尺寸无关。
-   剪影和描边多边形共用同一组顶点；空板高度不足时内侧边收缩成尖角。 */
-const PANEL_TOP_DEG = 3.2;
+/* 面板剪影：顶边向中心上扬、底边向中心上扫，同向朝中心收拢；
+   内侧边是贴上缘的窄带。两个角度恒定，与面板尺寸无关。
+   剪影和描边多边形共用同一组顶点；空板高度不足时内侧带缩成尖劈。 */
+const PANEL_TOP_DEG = 4.5;
 const PANEL_BOT_DEG = 22;
 
 function syncSkew() {
@@ -913,10 +914,10 @@ function syncSkew() {
     if (!w || !h) continue;
     const drop = Math.min(w * Math.tan((PANEL_TOP_DEG * Math.PI) / 180), h);
     const sweep = w * Math.tan((PANEL_BOT_DEG * Math.PI) / 180);
-    const yB = Math.max(h - sweep, drop);
+    const yB = Math.max(h - sweep, 0);
     const pts = innerRight
-      ? [[0, 0], [w, drop], [w, yB], [0, h]]
-      : [[0, drop], [w, 0], [w, h], [0, yB]];
+      ? [[0, drop], [w, 0], [w, yB], [0, h]]
+      : [[0, 0], [w, drop], [w, h], [0, yB]];
     el.style.clipPath =
       `polygon(${pts.map(([x, y]) => `${x}px ${y.toFixed(1)}px`).join(", ")})`;
     const edge = el.querySelector(".panel-edge");
@@ -924,9 +925,9 @@ function syncSkew() {
     edge.firstElementChild.setAttribute("points",
       pts.map(([x, y]) => `${x},${y.toFixed(1)}`).join(" "));
   }
-  // 内容跟着面板倾斜：贴合顶边角度，文字与剪影边缘平行
-  document.documentElement.style.setProperty("--skew-l", `${PANEL_TOP_DEG}deg`);
-  document.documentElement.style.setProperty("--skew-r", `${-PANEL_TOP_DEG}deg`);
+  // 内容跟着顶边倾斜：左板向中心上扬取负角，右板镜像取正，文字与顶边平行
+  document.documentElement.style.setProperty("--skew-l", `${-PANEL_TOP_DEG}deg`);
+  document.documentElement.style.setProperty("--skew-r", `${PANEL_TOP_DEG}deg`);
 }
 // 面板高度随内容增减，剪影要跟着重算
 const panelRO = new ResizeObserver(() => syncSkew());
