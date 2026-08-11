@@ -203,6 +203,73 @@ function pan(dt) {
     (held.has("up") ? step : 0) - (held.has("down") ? step : 0));
 }
 
+/* ── 虚拟摇杆：左杆平移、右杆转视角，仅触屏可见 ──────────
+   pointermove 只写归一化矢量，消费集中在 frame 的 joyStep 里。
+   各自 setPointerCapture 捕获指针，另一手仍可在画布上捏合缩放。 */
+const JOY_DEAD = 0.15;
+const joys = [
+  { el: document.getElementById("joy-left"), vx: 0, vy: 0, id: -1 },
+  { el: document.getElementById("joy-right"), vx: 0, vy: 0, id: -1 },
+];
+let joyActive = 0;
+
+for (const j of joys) {
+  const nub = j.el.querySelector(".joy-nub");
+  const setNub = (x, y) => {
+    nub.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+  };
+  const move = (e) => {
+    const r = j.el.getBoundingClientRect();
+    const max = r.width / 2;
+    let dx = e.clientX - (r.left + max);
+    let dy = e.clientY - (r.top + max);
+    const len = Math.hypot(dx, dy);
+    if (len > max) { dx *= max / len; dy *= max / len; }
+    setNub(dx, dy);
+    const m = Math.min(len / max, 1);
+    if (m < JOY_DEAD) { j.vx = 0; j.vy = 0; return; }
+    // 死区外重新归一化到 0..1，起步不跳变
+    const s = (m - JOY_DEAD) / (1 - JOY_DEAD) / (m * max);
+    j.vx = dx * s; j.vy = dy * s;
+  };
+  const release = () => {
+    if (j.id < 0) return;
+    j.id = -1;
+    joyActive -= 1;
+    j.el.classList.remove("drag");
+    j.vx = 0; j.vy = 0;
+    setNub(0, 0);
+  };
+  j.el.addEventListener("pointerdown", (e) => {
+    if (j.id >= 0) return;
+    j.el.setPointerCapture(e.pointerId);
+    j.id = e.pointerId;
+    joyActive += 1;
+    j.el.classList.add("drag");
+    setAuto(false);
+    move(e);
+  });
+  j.el.addEventListener("pointermove", (e) => { if (e.pointerId === j.id) move(e); });
+  j.el.addEventListener("pointerup", (e) => { if (e.pointerId === j.id) release(); });
+  j.el.addEventListener("pointercancel", (e) => { if (e.pointerId === j.id) release(); });
+  addEventListener("blur", release);
+}
+
+// 左杆等效 WASD 平移，右杆转视角；无活动摇杆时零开销
+function joyStep(dt) {
+  if (!joyActive) return;
+  const [jl, jr] = joys;
+  if (jl.vx || jl.vy) {
+    const step = cam.radius * 0.9 * dt;
+    panScreen(jl.vx * step, -jl.vy * step);
+  }
+  if (jr.vx || jr.vy) {
+    cam.goalTheta -= jr.vx * dt * 1.1;
+    cam.goalPhi = THREE.MathUtils.clamp(
+      cam.goalPhi - jr.vy * dt * 1.1, 0.04, Math.PI - 0.04);
+  }
+}
+
 // 滚轮不直接改半径，而是喂给一个会衰减的缩放速度，滑起来有惯性
 let zoomVel = 0;
 const ZOOM_KEEP = 0.006;   // 每秒保留比例
@@ -1415,9 +1482,11 @@ function frame(now) {
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
   stepAuto();
-  if (opt.spin && !dragging && held.size === 0 && !auto.on) cam.goalTheta += dt * 0.012;
+  if (opt.spin && !dragging && held.size === 0 && !auto.on && !joyActive)
+    cam.goalTheta += dt * 0.012;
   stepZoom(dt);
   pan(dt);
+  joyStep(dt);
   applyCamera(dt);
   project();
   updateMarker();

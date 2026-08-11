@@ -327,14 +327,28 @@
     transition: opacity .13s ease;
   }
 
-  #rotate-hint {
-    display: none;
-    position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
-    z-index: 9; padding: .38rem .8rem;
-    background: rgba(8, 14, 26, .8); color: var(--accent);
-    border: 1px solid rgba(242, 200, 75, .3); border-radius: 999px;
-    font-size: .6rem; letter-spacing: .1em; white-space: nowrap;
+  /* 竖屏遮罩：布局恒按横屏仪表渲染，竖屏只提示旋转；z 低于 #loading(20) */
+  #rotate-overlay {
+    display: none; position: fixed; inset: 0; z-index: 19;
+    background:
+      radial-gradient(72vw 54vh at 50% 32%, rgba(26, 40, 68, .45), transparent 72%),
+      var(--ink);
+    place-items: center; text-align: center;
   }
+  #rotate-overlay .ro-box {
+    display: flex; flex-direction: column; align-items: center; gap: 1.2rem;
+  }
+  #rotate-overlay svg {
+    width: 4.8rem; height: 4.8rem;
+    fill: none; stroke: var(--accent); stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+    filter: drop-shadow(0 0 10px rgba(242, 200, 75, .35));
+  }
+  #rotate-overlay p {
+    margin: 0; font-size: .7rem; letter-spacing: .22em; color: var(--accent);
+  }
+  /* 虚拟摇杆仅触屏显示，样式在 pointer:coarse 块 */
+  .joy { display: none; }
 
   #footer {
     position: fixed; left: 0; right: 0; bottom: .7rem; z-index: 5;
@@ -364,28 +378,20 @@
   #load-pct { font-size: .62rem; letter-spacing: .14em;
               font-variant-numeric: tabular-nums; color: var(--accent); }
 
-  /* 竖屏手机：弧形仪表与梯形卡片挤不下，退回上下叠放 */
+  /* 竖屏手机：不再退化布局，全屏提示旋转 */
   @media (max-width: 900px) and (orientation: portrait) {
-    #hud, #hud-labels, #reticle, #targets { display: none; }
-    #rotate-hint { display: block; }
-    #panel-left, #panel-right {
-      left: .7rem; right: .7rem; width: auto; bottom: auto;
-      clip-path: none; padding: .7rem .8rem;
-    }
-    #panel-left { top: auto; bottom: 15.5rem; padding: .45rem; }
-    #panel-right { top: auto; bottom: 3rem; max-height: 13rem; overflow-y: auto; }
-    .panel-edge { display: none; }
-    #panel-left, #panel-right { border: 1px solid rgba(242, 200, 75, .28); border-radius: 12px; }
-    #cover { aspect-ratio: 16 / 9; }
-    #footer { display: none; }
+    #rotate-overlay { display: grid; }
   }
 
   @media (max-width: 1100px) and (orientation: landscape) {
     :root { --panel-l: 15rem; --panel-r: 13rem; }
     #panel-left { left: 3vw; }
-    #panel-right { right: 3vw; }
+    #panel-right { right: 3vw; min-height: 11rem; }
     #reticle { width: 100px; height: 100px; }
     #footer { display: none; }
+    .target { width: 10rem; }
+    /* 按钮区允许换行，给后续新增按钮留余量 */
+    #ctl-row { flex-wrap: wrap; }
   }
 
   @media (max-width: 900px) {
@@ -400,6 +406,34 @@
   @media (pointer: coarse) {
     #stage { touch-action: none; }
     #tooltip { display: none; }
+    /* 虚拟摇杆：两侧边缘垂直居中，避开底部面板与中央仪表 */
+    .joy {
+      display: block; position: fixed; top: 50%; transform: translateY(-50%);
+      width: 6.5rem; height: 6.5rem; z-index: 8; border-radius: 50%;
+      border: 1px solid rgba(242, 200, 75, .2);
+      background: radial-gradient(circle, rgba(9, 15, 28, .3), rgba(9, 15, 28, .1) 72%);
+      backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      touch-action: none;
+    }
+    #joy-left { left: 1.2rem; }
+    #joy-right { right: 1.2rem; }
+    .joy-nub {
+      position: absolute; left: 50%; top: 50%; width: 2.6rem; height: 2.6rem;
+      border-radius: 50%; border: 1px solid rgba(242, 200, 75, .5);
+      background: radial-gradient(circle at 38% 34%,
+        rgba(242, 200, 75, .34), rgba(242, 200, 75, .1));
+      transform: translate(-50%, -50%);
+      transition: transform .15s ease;   /* 松手回中 */
+    }
+    .joy.drag .joy-nub { transition: none; }   /* 拖动中即时跟随 */
+  }
+
+  /* 窄横屏摇杆避让：底部面板与两侧指示器挤占边缘，缩小并稍上移 */
+  @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
+    .joy { width: 5.6rem; height: 5.6rem; top: 45%; }
+    .joy-nub { width: 2.2rem; height: 2.2rem; }
+    #joy-left { left: .8rem; }
+    #joy-right { right: .8rem; }
   }
 </style>
 </head>
@@ -499,7 +533,21 @@
 </div>
 
 <div id="tooltip"></div>
-<div id="rotate-hint">横屏浏览可获得完整仪表</div>
+
+<div id="rotate-overlay" aria-hidden="true">
+  <div class="ro-box">
+    <!-- 圆角矩形手机 + 环绕旋转箭头，圆心 (32,32) 半径 26 -->
+    <svg viewBox="0 0 64 64">
+      <rect x="24" y="15" width="16" height="34" rx="3.5"/>
+      <path d="M29 44.5h6"/>
+      <path d="M32 6 A26 26 0 0 1 58 32"/>
+      <path d="M54 28.5 58 33 61.5 28.5"/>
+      <path d="M32 58 A26 26 0 0 1 6 32"/>
+      <path d="M2.5 35.5 6 31 9.5 35.5"/>
+    </svg>
+    <p>请旋转手机 · 横屏体验完整仪表</p>
+  </div>
+</div>
 
 <div id="controls">
   <div id="ctl-row">
@@ -528,6 +576,9 @@
   </div>
 </div>
 <audio id="bgm" preload="none"></audio>
+
+<div id="joy-left" class="joy" aria-hidden="true"><div class="joy-nub"></div></div>
+<div id="joy-right" class="joy" aria-hidden="true"><div class="joy-nub"></div></div>
 
 <div id="footer">
   星表 Tycho-2 · Hipparcos<span class="sep">/</span>音频特征 MERT-v1-95M
