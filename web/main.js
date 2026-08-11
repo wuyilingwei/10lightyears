@@ -568,8 +568,7 @@ function select(i) {
   }
   selected = i;
   if (i < 0) {
-    panelLeft.classList.remove("on");
-    panelRight.classList.remove("on");
+    panelRight.classList.remove("on");   // 文本面板常驻，只收起播放器
     clearLinks();
     linkLayer.classList.remove("sel");
     flare.needsUpdate = true; edgeGeom.getAttribute("alpha").needsUpdate = true;
@@ -586,7 +585,6 @@ function select(i) {
   edgeGeom.getAttribute("alpha").needsUpdate = true;
 
   const t = tracks[i];
-  panelLeft.classList.add("on");
   panelRight.classList.add("on");
   elTitle.textContent = t.t;
 
@@ -625,7 +623,7 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
 // 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
 // 面板是平行四边形，上下边斜率都是 8% 高 / 宽；倾角按实测尺寸算才对得齐
 function syncSkew() {
-  for (const [el, name, sign] of [[panelLeft, "--skew-l", 1], [panelRight, "--skew-r", -1]]) {
+  for (const [el, name, sign] of [[panelLeft, "--skew-l", -1], [panelRight, "--skew-r", 1]]) {
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) continue;
     const deg = (Math.atan2(0.08 * r.height, r.width) * 180) / Math.PI;
