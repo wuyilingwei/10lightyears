@@ -43,10 +43,17 @@ const STAR_STRIDE = 6;           // gx, gy, gz, vt_mag, bv_color, label
 const EDGE_BASE = 0.006;         // resting opacity of the similarity graph
 const EDGE_LIT = 0.9;
 
-const TRAIL_MAX = 0.87;      // 相机全速时上一帧的保留比例
+const TRAIL_MAX = 0.87;      // 中档：相机全速时上一帧的保留比例（现在的强度，默认档）
 const TRAIL_DEADZONE = 0.05; // 低于此角速度不留尾，免得自转也拖影
 const TRAIL_EXP = 2 / 3;     // 尾长随角速度的次线性增长指数
-const TRAIL_K = 0.75;        // 使常规拖拽（约 1.3 rad/s）接近 TRAIL_MAX
+const TRAIL_K = 0.75;        // 中档：使常规拖拽（约 1.3 rad/s）接近 TRAIL_MAX
+// 拖尾强度四档：关＝k/max 都为 0，走同一条平滑公式衰减到 0，不用再特判
+const TRAIL_LEVELS = {
+  off: { k: 0, max: 0 },
+  low: { k: TRAIL_K * 0.5, max: 0.65 },
+  mid: { k: TRAIL_K, max: TRAIL_MAX },
+  high: { k: TRAIL_K * 1.35, max: 0.95 },
+};
 
 const canvas = document.getElementById("stage");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -353,6 +360,8 @@ const GEAR_MIN = GEAR_STEPS[0] * SCENE_SCALE;
 const GEAR_MAX = GEAR_STEPS[GEAR_STEPS.length - 1] * SCENE_SCALE;
 const attDir = new THREE.Vector3();
 const attLook = new THREE.Vector3();
+const attPosPre = new THREE.Vector3();
+const attPosPost = new THREE.Vector3();
 
 function shiftGear(dir) {
   const g = throttle.gear / SCENE_SCALE;
@@ -404,6 +413,12 @@ function attitudeStep(dt) {
   const yawA = att.yaw * dt, pitA = att.pitch * dt, rollA = att.roll * dt;
   if (!yawA && !pitA && !rollA) return;
 
+  // 纯转向不该挪机位：applyCamera 仍用「target + radius·球面偏移(theta,phi)」
+  // 定位相机，只转 bodyFwd 不动 target 的话，反算出的 theta/phi 一变，
+  // 这条公式算出的机位就会跟着在以 target 为心的球面上滑——记下转向前的
+  // 隐含机位，转完后把这份漂移原样吃回 target，机位才真正钉死原地
+  attPosPre.copy(stateCamPos(cam));
+
   // 偏航/俯仰/滚转均绕机身"当前"轴转（局部系合成），滚转后俯仰/偏航
   // 仍是屏幕上的俯仰/偏航；三者依次作用在同一组持久向量上
   if (yawA) {
@@ -429,9 +444,16 @@ function attitudeStep(dt) {
   bodyRight.addScaledVector(bodyFwd, -bodyRight.dot(bodyFwd)).normalize();
   bodyUp.crossVectors(bodyRight, bodyFwd).normalize();
 
-  // 反算 theta/phi 供自动驾驶体系读取；姿态旋转不改位置，target/radius 不变
+  // 反算 theta/phi 供自动驾驶体系读取；radius 不变，target 下面用漂移量补偿
   cam.theta = cam.goalTheta = unwrap(Math.atan2(-bodyFwd.x, -bodyFwd.z), cam.theta);
   cam.phi = cam.goalPhi = Math.acos(THREE.MathUtils.clamp(-bodyFwd.y, -1, 1));
+
+  // target 还没动，此刻 stateCamPos 算出的就是"只转朝向"会漂到的机位；
+  // 把这份漂移加回 target/goalTarget（同一个 delta，不吃掉在途的 pan 差值）
+  attPosPost.copy(stateCamPos(cam));
+  attPosPost.subVectors(attPosPre, attPosPost);
+  cam.target.add(attPosPost);
+  cam.goalTarget.add(attPosPost);
 }
 
 function throttleStep(dt) {
@@ -466,9 +488,11 @@ function throttleStep(dt) {
   cam.goalTarget.addScaledVector(bodyFwd, throttle.v * dt);
 }
 
-/* ── 虚拟摇杆：左杆调节流档位、右杆偏航俯仰，仅触屏可见 ──────────
-   pointermove 只写归一化矢量，消费集中在 frame 的 joyStep 里。
-   各自 setPointerCapture 捕获指针，另一手仍可在画布上捏合缩放。 */
+/* ── 虚拟摇杆：左杆＝WASD 同职能的辅助平移，右杆纵轴＝滚轮同职能的连续
+   调速、横轴＝翻滚（同 QE）。俯仰/偏航交给指向线（右键/触屏单指按住），
+   摇杆不管这两个轴。仅触屏可见。pointermove 只写归一化矢量，消费集中在
+   frame 的 joyStep 里。各自 setPointerCapture 捕获指针，另一手仍可在
+   画布上捏合缩放。 */
 const JOY_DEAD = 0.15;
 const joys = [
   { el: document.getElementById("joy-left"), vx: 0, vy: 0, id: -1 },
@@ -505,6 +529,9 @@ for (const j of joys) {
     j.el.classList.remove("drag");
     j.vx = 0; j.vy = 0;
     setNub(0, 0);
+    // 右杆横轴驱动的翻滚借用 held 这条既有输入线路，松手/丢指针都要清掉，
+    // 否则 joyActive 归零后 joyStep 直接早退，held 里的滚转标记会卡住
+    held.delete("rollL"); held.delete("rollR");
   };
   j.el.addEventListener("pointerdown", (e) => {
     if (j.id >= 0) return;
@@ -521,18 +548,25 @@ for (const j of joys) {
   addEventListener("blur", release);
 }
 
-// 左杆纵轴连续调档，右杆偏航/俯仰（与姿态键同一路径）；无活动摇杆时零开销
+// 左杆＝WASD 同职能的辅助平移，右杆纵轴＝滚轮同职能的连续调速，
+// 右杆横轴＝翻滚（同 QE，借用 held 那条既有输入线路）；无活动摇杆时零开销
 function joyStep(dt) {
   if (!joyActive) return;
   const [jl, jr] = joys;
   // 握杆期间新启动的辅助驾驶也要被打断，否则杆量每帧被段插值覆盖
   if (jl.vx || jl.vy || jr.vx || jr.vy) setAuto(false);
-  if (jl.vy) {
+  if ((jl.vx || jl.vy) && !auto.on && !auto.assist) {
+    const step = ENGINE.rcs.panMax * MANUAL_BOOST * dt;
+    panScreen(jl.vx * step, -jl.vy * step);
+  }
+  if (jr.vy) {
     // 满杆每秒 400 ly/s
     throttle.gear = THREE.MathUtils.clamp(
-      throttle.gear - jl.vy * dt * 400 * SCENE_SCALE, GEAR_MIN, GEAR_MAX);
+      throttle.gear - jr.vy * dt * 400 * SCENE_SCALE, GEAR_MIN, GEAR_MAX);
   }
-  if (jr.vx || jr.vy) { att.inYaw -= jr.vx; att.inPitch -= jr.vy; }
+  if (jr.vx > 0) { held.add("rollR"); held.delete("rollL"); }
+  else if (jr.vx < 0) { held.add("rollL"); held.delete("rollR"); }
+  else { held.delete("rollL"); held.delete("rollR"); }
 }
 
 /* ── 指向线操控：右键/触屏单指按住不放，转向由「光标与屏幕中心的
@@ -926,6 +960,11 @@ const fmt = new Intl.NumberFormat("zh-CN");
 
 function select(i) {
   stopPlayer();
+  // 任何路径改了选中目标，之前数字键留下的预选都作废
+  if (pendingSlot >= 0 && targetSlots[pendingSlot]) {
+    targetSlots[pendingSlot].classList.remove("pending");
+    pendingSlot = -1;
+  }
   if (selected >= 0) {
     flare.array[selected] = 0;
     for (const e of neighbours[selected]) {
@@ -973,37 +1012,37 @@ function select(i) {
   F.mag.textContent = t.m.toFixed(2);
   fillLinks(i);
   requestAnimationFrame(syncSkew);   // 内容高度变了要重算倾角
-  // 点选只锁定目标，不再自动飞过去——按开火键（Space/触屏开火按钮）才接敌
+  // 点选只锁定目标，不再自动飞过去——按 Space（或触屏空格按钮）才接敌
 }
 
-// 开火：手动模式下有锁定目标才接敌，同一套辅助驾驶分段送达
+// 接敌：手动模式下有锁定目标才出发，同一套辅助驾驶分段送达
 // 已在接敌中则不再重入——长按/连按 Space 会反复用当前机位重规划航段，永远飞不到
 function fireEngage() {
   if (selected >= 0 && !auto.on && !auto.assist) startAssist(selected);
 }
-const fireBtn = document.getElementById("fire-btn");
-fireBtn.addEventListener("pointerdown", (e) => {
+// 触屏空格按钮：与键盘 Space 完全同路——先确认数字键预选，没有预选才接敌
+const spcBtn = document.getElementById("spc-btn");
+spcBtn.addEventListener("pointerdown", (e) => {
   e.preventDefault();
+  if (confirmPending()) return;
   if (selected < 0) return;   // 没有锁定目标时不该打断巡游/漫游
   setAuto(false);
   fireEngage();
 });
 
-// 触屏滚转按钮：按住持续滚转、松开即停，直接复用 held 这条既有输入线路
-// （与键盘 QE 完全同路，attitudeStep 不用改）
-for (const [id, key] of [["roll-l-btn", "rollL"], ["roll-r-btn", "rollR"]]) {
-  const el = document.getElementById(id);
-  const stop = () => held.delete(key);
-  el.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    el.setPointerCapture(e.pointerId);
-    setAuto(false);
-    held.add(key);
-  });
-  el.addEventListener("pointerup", stop);
-  el.addEventListener("pointercancel", stop);
-  addEventListener("blur", stop);
-}
+// 触屏中键按钮：与鼠标中键完全同路——按下清速度，按住 350ms 转银心，松开即停
+const midBtn = document.getElementById("mid-btn");
+const midBtnStop = () => { midHeld = false; steerCenter = false; clearTimeout(midTimer); };
+midBtn.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  midBtn.setPointerCapture(e.pointerId);
+  midHeld = true;
+  throttle.gear = 0; throttle.v = 0;
+  midTimer = setTimeout(() => { if (midHeld) steerCenter = true; }, 350);
+});
+midBtn.addEventListener("pointerup", midBtnStop);
+midBtn.addEventListener("pointercancel", midBtnStop);
+addEventListener("blur", midBtnStop);
 
 const elTargets = document.getElementById("targets");
 const TARGET_MAX = 8;        // 每侧四个槽位
@@ -1020,10 +1059,12 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-/* 面板剪影：近似平行四边形——单一倾角，外侧边全高、内侧边（朝屏幕中心）
-   上下各收进同一点距，与面板尺寸无关。剪影和描边多边形共用同一组顶点；
-   空板高度不足时内侧边缩成尖劈。 */
-const PANEL_SKEW_DEG = 6;
+/* 面板剪影：近似平行四边形——顶边与底边同方向倾斜（不是两端对收的等腰梯形），
+   外侧角钉在 0/h（不会为负），内侧角分别下压/上提；顶边幅度明显小于底边
+   （"稍微压一点点"），底边幅度即原倾角，与面板尺寸无关。剪影和描边多边形
+   共用同一组顶点；空板高度不足时收窄到极限会缩成尖劈。 */
+const PANEL_SKEW_DEG = 6;       // 底边倾角
+const PANEL_SKEW_TOP_DEG = 2;   // 顶边倾角，同方向、幅度小很多
 
 function syncSkew() {
   for (const [el, innerRight] of [[panelLeft, true], [panelRight, false]]) {
@@ -1031,10 +1072,12 @@ function syncSkew() {
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) continue;
     const drop = Math.min(w * Math.tan((PANEL_SKEW_DEG * Math.PI) / 180), h / 2);
-    const yA = drop, yB = h - drop;
+    const dropTop = Math.min(w * Math.tan((PANEL_SKEW_TOP_DEG * Math.PI) / 180), h / 2);
+    // 顶边外侧角=0（不为负）、内侧角=dropTop；底边内侧角=h-drop、外侧角=h——
+    // 两条边都是"外侧在极值、内侧被推向中间"，且推的方向相同（不再对收）
     const pts = innerRight
-      ? [[0, 0], [w, yA], [w, yB], [0, h]]
-      : [[0, yA], [w, 0], [w, h], [0, yB]];
+      ? [[0, dropTop], [w, 0], [w, h - drop], [0, h]]
+      : [[0, 0], [w, dropTop], [w, h], [0, h - drop]];
     el.style.clipPath =
       `polygon(${pts.map(([x, y]) => `${x}px ${y.toFixed(1)}px`).join(", ")})`;
     const edge = el.querySelector(".panel-edge");
@@ -1098,11 +1141,28 @@ function clearLinks() {
   document.body.classList.remove("has-sel");
 }
 
-// 数字键 1-8 直接点名槽位；PageUp/PageDown 在已显示的槽位间循环切换，
-// 从当前选中项（若恰在槽位列表里）接着走，否则从头开始
+// 数字键 1-8 只预选槽位（高亮候选，不切换），按 Space/空格按钮确认才真正
+// select() 过去；PageUp/PageDown 保持直切，连续浏览没必要每步都确认
+let pendingSlot = -1;
+
 function pickTargetSlot(k) {
   const el = targetSlots[k];
-  if (el && el.dataset.i) select(Number(el.dataset.i));
+  if (!el || !el.dataset.i) return;
+  if (pendingSlot >= 0 && targetSlots[pendingSlot]) targetSlots[pendingSlot].classList.remove("pending");
+  pendingSlot = k;
+  el.classList.add("pending");
+}
+
+// Space/空格按钮先确认预选：有预选就切换过去（这一下只切换，不接敌）；
+// 没有预选时调用方退回接敌语义。返回值告诉调用方是否吃掉了这次按键
+function confirmPending() {
+  if (pendingSlot < 0) return false;
+  const el = targetSlots[pendingSlot];
+  const i = el && el.dataset.i ? Number(el.dataset.i) : -1;
+  el.classList.remove("pending");
+  pendingSlot = -1;
+  if (i >= 0) select(i);
+  return true;
 }
 function cycleTarget(dir) {
   const filled = targetSlots
@@ -1145,7 +1205,7 @@ function hexPoints(cx, cy, r) {
 }
 
 // 拖尾把星点画成滞后的质心，标记按瞬时投影走会脱节；
-// 用拖尾同源的 decay 做同步 EMA，decay=0（静止/防晕）时无平滑
+// 用拖尾同源的 decay 做同步 EMA，decay=0（静止/拖尾关）时无平滑
 const mark = { sx: 0, sy: 0, hx: 0, hy: 0, sel: -1, hov: -1 };
 const elLockDot = document.getElementById("lock-dot");
 
@@ -1262,7 +1322,6 @@ const OPTS = {
   navball: ["o-navball", "no-navball", true],
   footer: ["o-footer", "no-footer", true],
   spin: ["o-spin", null, true],
-  safe: ["o-safe", null, false],
 };
 const opt = {};
 
@@ -1288,6 +1347,21 @@ optBtn.addEventListener("click", () => {
   optsBox.classList.toggle("on");
   optBtn.classList.toggle("on", optsBox.classList.contains("on"));
 });
+
+// 拖尾强度：关/低/中/高，不是勾选框走独立的 select，中＝默认＝现在的强度
+const elTrail = document.getElementById("o-trail");
+let trailLevel = TRAIL_LEVELS.mid;
+function applyTrailLevel() {
+  trailLevel = TRAIL_LEVELS[elTrail.value] || TRAIL_LEVELS.mid;
+  try { localStorage.setItem("hud.trail", elTrail.value); } catch { /* 隐私模式 */ }
+}
+{
+  let saved = null;
+  try { saved = localStorage.getItem("hud.trail"); } catch { /* 隐私模式 */ }
+  elTrail.value = saved && TRAIL_LEVELS[saved] ? saved : "mid";
+  elTrail.addEventListener("change", applyTrailLevel);
+  applyTrailLevel();
+}
 
 /* ── 自动巡游 / 漫游 ────────────────────────────────
    巡游：聚焦某颗星与随机运镜轮换，偶尔退到全景；
@@ -1806,12 +1880,14 @@ addEventListener("keydown", (e) => {
   }
 });
 
-// 开火（接敌）、攻击指示器数字键选目标、PageUp/PageDown 循环切换
+// 空格（确认预选/接敌）、攻击指示器数字键预选、PageUp/PageDown 循环切换
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.code === "Space") {
     if (e.target instanceof HTMLButtonElement) return;   // 让聚焦按钮保留原生空格激活
-    e.preventDefault(); fireEngage(); return;
+    e.preventDefault();
+    if (!confirmPending()) fireEngage();
+    return;
   }
   if (e.code === "PageUp") { e.preventDefault(); cycleTarget(-1); return; }
   if (e.code === "PageDown") { e.preventDefault(); cycleTarget(1); return; }
@@ -2046,9 +2122,9 @@ function frame(now) {
 
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
-    TRAIL_K * Math.pow(excess, TRAIL_EXP), 0, TRAIL_MAX);
-  decay = opt.safe ? 0 : THREE.MathUtils.clamp(
-    decay + (want - decay) * (1 - Math.pow(0.002, dt)), 0, TRAIL_MAX);
+    trailLevel.k * Math.pow(excess, TRAIL_EXP), 0, trailLevel.max);
+  decay = THREE.MathUtils.clamp(
+    decay + (want - decay) * (1 - Math.pow(0.002, dt)), 0, trailLevel.max);
 
   // 上一帧衰减后写入 rtNext，场景以 (1-decay) 的增益叠加其上
   renderer.setRenderTarget(rtNext);
