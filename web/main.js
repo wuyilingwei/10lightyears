@@ -874,7 +874,7 @@ function select(i) {
   F.sp.textContent = t.y || "—";
   // 选中标注里的恒星类型字母（O/B/A/F/G/K/M），用该星的光谱色着色
   const cls = (t.y || "").match(/[OBAFGKM]/);
-  elRingCls.textContent = cls ? `${cls[0]} · ` : "";
+  elRingCls.textContent = cls ? cls[0] : "";
   elRingCls.style.fill = cls
     ? `rgb(${(colors[i * 3] * 255) | 0},${(colors[i * 3 + 1] * 255) | 0},${(colors[i * 3 + 2] * 255) | 0})`
     : "";
@@ -997,7 +997,6 @@ const elRingGlow = document.getElementById("ring-glow");
 const elHoverRing = document.getElementById("hover-ring");
 const elRingDist = document.getElementById("ring-dist");
 const elRingCls = document.getElementById("ring-cls");
-const elRingLy = document.getElementById("ring-ly");
 const RING_R = parseFloat(
   getComputedStyle(document.documentElement).getPropertyValue("--ring-r")) || 19;
 
@@ -1043,11 +1042,14 @@ function updateMarker() {
   elRing.setAttribute("points", pts);
   elRingGlow.setAttribute("points", pts);
 
-  // 距离标注挂在六边形右上角，su -> ly；类型字母由 select() 写入
+  // 类型字母在左上、距离在右上，基线与平顶六边形的上边取平（0.866R）
   const dLy = camera.position.distanceTo(starVec(selected)) / SCENE_SCALE;
-  elRingLy.textContent = `${dLy.toFixed(dLy >= 1000 ? 0 : 1)} ly`;
-  elRingDist.setAttribute("x", (sx + RING_R + 6).toFixed(1));
-  elRingDist.setAttribute("y", (sy - RING_R - 6).toFixed(1));
+  elRingDist.textContent = `${dLy.toFixed(dLy >= 1000 ? 0 : 1)} ly`;
+  const topY = (sy - RING_R * 0.866).toFixed(1);
+  elRingCls.setAttribute("x", (sx - RING_R - 5).toFixed(1));
+  elRingCls.setAttribute("y", topY);
+  elRingDist.setAttribute("x", (sx + RING_R + 5).toFixed(1));
+  elRingDist.setAttribute("y", topY);
 
   // 引线从信息框朝向恒星的那条边引出，止于六边形边缘。
   // 用射线与矩形求交，桌面端的左侧卡片和移动端的底部抽屉都能自然出线。

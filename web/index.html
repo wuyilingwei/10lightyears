@@ -60,13 +60,13 @@
   #link-layer.sel #ring { opacity: 1; }
   #link-layer.sel #ring-glow { opacity: .16; }
   #link-layer.hov #hover-ring { opacity: .4; }
-  #ring-dist {
+  #ring-dist, #ring-cls {
     fill: var(--accent); font-size: .58rem; letter-spacing: .12em;
     font-variant-numeric: tabular-nums;
     opacity: 0; transition: opacity .24s ease;
   }
   #ring-cls { font-weight: 700; }   /* 恒星类型字母，颜色由光谱色内联给出 */
-  #link-layer.sel #ring-dist { opacity: .9; }
+  #link-layer.sel #ring-dist, #link-layer.sel #ring-cls { opacity: .9; }
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
@@ -527,7 +527,8 @@
   <polygon id="ring-glow"></polygon>
   <polygon id="ring"></polygon>
   <polygon id="hover-ring"></polygon>
-  <text id="ring-dist"><tspan id="ring-cls"></tspan><tspan id="ring-ly"></tspan></text>
+  <text id="ring-cls" text-anchor="end"></text>
+  <text id="ring-dist"></text>
 </svg>
 
 <svg id="hud" aria-hidden="true">
