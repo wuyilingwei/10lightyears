@@ -14,9 +14,12 @@
     --reticle: #7ec8ff;
     --text: #dfe8f2;
     --text-dim: #8497ad;
-    --ring-r: 19px;
+    --ring-r: 15px;
     --panel-l: 22rem;
     --panel-r: 20rem;
+    /* rotateY 正角把元素左缘转近观察者：左板取负让右(内)缘近，右板取正让左(内)缘近 */
+    --tilt-l: -7deg;
+    --tilt-r: 7deg;
   }
 
   * { box-sizing: border-box; }
@@ -49,12 +52,12 @@
     transition: opacity .24s ease;
   }
   #leader { stroke-width: 1; stroke-dasharray: 3 4; }
-  #ring { stroke-width: 1.4; }
-  #ring-glow { stroke-width: 4; }
-  #hover-ring { stroke-width: 1.4; transition: opacity .12s ease; }
+  #ring { stroke-width: 4.2; }
+  #ring-glow { stroke-width: 9; }
+  #hover-ring { stroke-width: 4.2; transition: opacity .12s ease; }
   #link-layer.sel #leader { opacity: .62; }
   #link-layer.sel #ring { opacity: 1; }
-  #link-layer.sel #ring-glow { opacity: .16; }
+  #link-layer.sel #ring-glow { opacity: .12; }
   #link-layer.hov #hover-ring { opacity: .4; }
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
@@ -89,11 +92,16 @@
     pointer-events: none; text-align: center;
   }
   #hud-icons { display: flex; gap: .7rem; }
-  .ic { width: 1.05rem; height: 1.05rem; opacity: .22; transition: opacity .2s, filter .2s; }
-  .ic svg { width: 100%; height: 100%; fill: none; stroke: var(--accent);
-            stroke-width: 1.2; stroke-linejoin: round; }
+  .ic { display: flex; flex-direction: column; align-items: center; gap: .12rem;
+        opacity: .22; transition: opacity .2s, filter .2s; }
+  .ic svg { width: 1.2rem; height: 1.2rem; fill: none; stroke: var(--accent);
+            stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  .ic .lb { font-style: normal; font-size: .44rem; letter-spacing: .16em;
+            color: var(--text-dim); }
   .ic.on { opacity: 1; filter: drop-shadow(0 0 5px rgba(242,200,75,.7)); }
+  .ic.on .lb { color: var(--accent); }
   #ic-rev.on svg { stroke: #ff9a6b; }
+  #ic-rev.on .lb { color: #ff9a6b; }
   #ic-rev.on { filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
 
   /* 速度读数嵌在两条弧之间 */
@@ -111,6 +119,7 @@
     background: linear-gradient(150deg, rgba(9, 15, 28, .62), rgba(7, 11, 21, .48));
     backdrop-filter: blur(12px) saturate(1.15);
     -webkit-backdrop-filter: blur(12px) saturate(1.15);
+    transform-origin: center;
     opacity: 0; visibility: hidden;
     transition: opacity .28s ease, visibility .28s;
   }
@@ -128,15 +137,18 @@
     vector-effect: non-scaling-stroke;
   }
 
+  /* 透视朝向：内侧边（左板右缘、右板左缘）转近观察者，如朝驾驶员倾斜的操作台 */
   #panel-left {
     left: 8vw; width: var(--panel-r);
     clip-path: polygon(0 8%, 100% 0, 100% 92%, 0 100%);
+    transform: perspective(1100px) rotateY(var(--tilt-l));
     padding: 1.3rem 1.5rem 1.4rem .9rem;
     display: flex; flex-direction: column; gap: .32rem;
   }
   #panel-right {
     right: 8vw; width: var(--panel-l);
     clip-path: polygon(0 0, 100% 8%, 100% 100%, 0 92%);
+    transform: perspective(1100px) rotateY(var(--tilt-r));
     padding: .8rem .8rem 1.1rem 1.4rem;
     min-height: 14rem;
   }
@@ -425,17 +437,28 @@
 <div id="hud-labels">
   <div id="hud-icons">
     <span class="ic" id="ic-main" title="主推进引擎">
-      <svg viewBox="0 0 16 16"><path d="M8 1.5 11.5 9H4.5z"/><path d="M5.5 10.5h5l-2.5 4z"/></svg></span>
-    <span class="ic" id="ic-rcs" title="矢量喷口">
-      <svg viewBox="0 0 16 16"><path d="M2.5 5.5h4v-2l3 3-3 3v-2h-4z"/>
-        <path d="M13.5 10.5h-4v2l-3-3 3-3v2h4z"/></svg></span>
-    <span class="ic" id="ic-auto" title="驾驶模式">
-      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11M2.5 8h11"/></svg></span>
+      <svg viewBox="0 0 16 16"><path d="M6 1.5h4l1.6 4H4.4z"/>
+        <path d="M5.2 7.5C5.5 10 6.4 12.4 8 14.5c1.6-2.1 2.5-4.5 2.8-7"/>
+        <path d="M7.1 7.5c.1 1.3.4 2.4.9 3.5.5-1.1.8-2.2.9-3.5"/></svg>
+      <i class="lb">主推</i></span>
+    <span class="ic" id="ic-rcs" title="姿态控制">
+      <svg viewBox="0 0 16 16"><rect x="6.4" y="6.4" width="3.2" height="3.2"/>
+        <path d="M6.8 2.4 8 5l1.2-2.6"/><path d="M6.8 13.6 8 11l1.2 2.6"/>
+        <path d="M2.4 6.8 5 8l-2.6 1.2"/><path d="M13.6 6.8 11 8l2.6 1.2"/></svg>
+      <i class="lb">姿态</i></span>
+    <span class="ic" id="ic-auto" title="自动巡航">
+      <svg viewBox="0 0 16 16"><path d="M10.2 3.3A5.2 5.2 0 1 1 5.8 3.3"/>
+        <path d="M7.6 1.5 9.4 2.8 7.6 4.1"/>
+        <circle cx="3.5" cy="10.6" r="1"/><circle cx="12.5" cy="10.6" r="1"/></svg>
+      <i class="lb">自动</i></span>
     <span class="ic" id="ic-lock" title="目标锁定">
-      <svg viewBox="0 0 16 16"><path d="M3 5.5V3h2.5M13 5.5V3h-2.5M3 10.5V13h2.5M13 10.5V13h-2.5"/>
-        <circle cx="8" cy="8" r="1.6"/></svg></span>
-    <span class="ic" id="ic-rev" title="倒车">
-      <svg viewBox="0 0 16 16"><path d="M8 14.5 4.5 7h7z"/><path d="M5.5 5.5h5l-2.5-4z"/></svg></span>
+      <svg viewBox="0 0 16 16"><path d="M2.5 5.5v-3h3M13.5 5.5v-3h-3M2.5 10.5v3h3M13.5 10.5v3h-3"/>
+        <circle cx="8" cy="8" r="1.5"/></svg>
+      <i class="lb">锁定</i></span>
+    <span class="ic" id="ic-rev" title="反推">
+      <svg viewBox="0 0 16 16"><path d="M4 2h8"/>
+        <path d="M3.8 5 8 8.6 12.2 5"/><path d="M3.8 9.6 8 13.2 12.2 9.6"/></svg>
+      <i class="lb">反推</i></span>
   </div>
 </div>
 <div id="speed-readout">0.0 <em>ly/s</em></div>
