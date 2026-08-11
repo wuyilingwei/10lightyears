@@ -82,8 +82,14 @@
      半径跟 --reticle-scale 联动、和 #reticle 大小成比例，但 r 属性用
      calc(var(...)*N) 在测试环境下解析不可靠（width/height 这类常规盒
      模型属性没问题，只有 r 这样的 SVG 几何属性会出错），改成 JS 在
-     updateMarker() 里读同一个变量后直接算好数值赋值——这里的 r 只是
-     JS 还没跑到第一帧前的初始占位，不用 calc()。 */
+     updateMarker() 里读同一个变量后直接算好数值赋值。
+     这里的字面量 r 不只是"第一帧前"的占位——main.js 加载星表数据要
+     await 一次网络请求，在此之前 resize()/frame() 一次都不会跑，
+     updateMarker() 更新不到，所以这个 CSS 初值在窄屏断点下必须自己
+     算对（下面两条 max-width:1100px 断点各自覆盖了一份 9.1/6.24，
+     对应 --reticle-scale:2.6 那一档），否则从首屏到数据载入完成这段
+     时间里，窄屏用户看到的锁定点会是桌面尺寸——这正是本条注释旁边这份
+     字面量存在的原因。*/
   #lock-dot {
     fill: #fff; opacity: .35; r: 3.5;
     transition: cx .3s ease, cy .3s ease, opacity .25s ease, r .25s ease;
@@ -560,6 +566,10 @@
      （含 #cover 播放器），这才是「iframe 嵌入不工作」在窄宽度下的真因 */
   @media (max-width: 1100px) {
     :root { --panel-l: 17rem; --panel-r: 15rem; --reticle-scale: 2.6; }
+    /* r 不支持 calc()，这两个数字是 3.5/2.4 × 2.6（见上面 #lock-dot 处的
+       说明）；--reticle-scale 这个断点值改了，这两行也要跟着手动改 */
+    #lock-dot { r: 9.1; }
+    #lock-dot.locked { r: 6.24; }
     #panel-left { left: 3vw; }
     #panel-right { right: 3vw; min-height: 11rem; }
     #footer { display: none; }
@@ -572,6 +582,8 @@
   /* 伪横屏的窄横屏等价：旋转后的横向宽度即物理高度 */
   @media (max-height: 1100px) {
     body.fake-land { --panel-l: 17rem; --panel-r: 15rem; --reticle-scale: 2.6; }
+    body.fake-land #lock-dot { r: 9.1; }
+    body.fake-land #lock-dot.locked { r: 6.24; }
     body.fake-land #panel-left { left: 3vh; }
     body.fake-land #panel-right { right: 3vh; min-height: 11rem; }
     body.fake-land #footer { display: none; }
