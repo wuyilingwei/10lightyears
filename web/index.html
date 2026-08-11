@@ -60,6 +60,12 @@
   #link-layer.sel #ring { opacity: 1; }
   #link-layer.sel #ring-glow { opacity: .12; }
   #link-layer.hov #hover-ring { opacity: .4; }
+  #ring-dist {
+    fill: var(--accent); font-size: .58rem; letter-spacing: .12em;
+    font-variant-numeric: tabular-nums;
+    opacity: 0; transition: opacity .24s ease;
+  }
+  #link-layer.sel #ring-dist { opacity: .9; }
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
@@ -98,12 +104,8 @@
   .ic svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: var(--accent);
             stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
   .ic .fl { fill: var(--accent); stroke: none; }
-  .ic .lb { font-style: normal; font-size: .5rem; line-height: 1;
-            letter-spacing: .08em; color: var(--accent); }
   .ic.on { opacity: 1; filter: drop-shadow(0 0 5px rgba(242,200,75,.7)); }
-  .ic.on .lb { color: var(--accent); }
   #ic-rev.on svg { stroke: #ff9a6b; }
-  #ic-rev.on .lb { color: #ff9a6b; }
   #ic-rev.on { filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
 
   /* 速度读数嵌在两条弧之间 */
@@ -161,6 +163,13 @@
     #panel-right { transform: perspective(1100px) rotateY(var(--tilt-r));
                    transform-origin: right center; }
   }
+  /* 伪横屏等价命中（JS 置 body.fake-land）；长度单位随旋转互换 vw/vh */
+  body.fake-land #panel-left { left: 8vh;
+    transform: perspective(1100px) rotateY(var(--tilt-l));
+    transform-origin: left center; }
+  body.fake-land #panel-right { right: 8vh;
+    transform: perspective(1100px) rotateY(var(--tilt-r));
+    transform-origin: right center; }
 
   #cover {
     width: 100%; aspect-ratio: 16 / 10; position: relative; overflow: hidden;
@@ -362,26 +371,18 @@
     transition: opacity .13s ease;
   }
 
-  /* 竖屏遮罩：布局恒按横屏仪表渲染，竖屏只提示旋转；z 低于 #loading(20) */
-  #rotate-overlay {
-    display: none; position: fixed; inset: 0; z-index: 19;
-    background:
-      radial-gradient(72vw 54vh at 50% 32%, rgba(26, 40, 68, .45), transparent 72%),
-      var(--ink);
-    place-items: center; text-align: center;
+  /* 伪横屏提示浮窗：右上角小胶囊（旋转后坐标系），金色边线 */
+  #rotate-toast {
+    position: fixed; right: 1rem; top: 1rem; z-index: 12;
+    padding: .4rem .9rem;
+    background: rgba(8, 14, 26, .78); color: var(--accent);
+    border: 1px solid rgba(242, 200, 75, .5); border-radius: 999px;
+    font-size: .62rem; letter-spacing: .18em; cursor: pointer;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    opacity: 0; transition: opacity .6s ease;
   }
-  #rotate-overlay .ro-box {
-    display: flex; flex-direction: column; align-items: center; gap: 1.2rem;
-  }
-  #rotate-overlay svg {
-    width: 4.8rem; height: 4.8rem;
-    fill: none; stroke: var(--accent); stroke-width: 1.5;
-    stroke-linecap: round; stroke-linejoin: round;
-    filter: drop-shadow(0 0 10px rgba(242, 200, 75, .35));
-  }
-  #rotate-overlay p {
-    margin: 0; font-size: .7rem; letter-spacing: .22em; color: var(--accent);
-  }
+  #rotate-toast.on { opacity: 1; }
+  #rotate-toast[hidden] { display: none; }
   /* 虚拟摇杆仅触屏显示，样式在 pointer:coarse 块 */
   .joy { display: none; }
 
@@ -413,9 +414,16 @@
   #load-pct { font-size: .62rem; letter-spacing: .14em;
               font-variant-numeric: tabular-nums; color: var(--accent); }
 
-  /* 竖屏手机：不再退化布局，全屏提示旋转（仅触屏；桌面窄高窗口不拦） */
+  /* 触屏竖屏：整站顺时针旋 90° 伪装横屏。body 定位后成为全部 fixed
+     后代的包含块；先上移自身高度再旋转，恰好盖满物理视口 */
   @media (max-width: 900px) and (orientation: portrait) and (pointer: coarse) {
-    #rotate-overlay { display: grid; }
+    body {
+      position: fixed; top: 0; left: 0;
+      width: 100vh; height: 100vw;
+      width: 100dvh; height: 100dvw;
+      transform-origin: left top;
+      transform: rotate(90deg) translateY(-100%);
+    }
   }
 
   @media (max-width: 1100px) and (orientation: landscape) {
@@ -429,6 +437,17 @@
     #ctl-row { flex-wrap: wrap; }
   }
 
+  /* 伪横屏的窄横屏等价：旋转后的横向宽度即物理高度 */
+  @media (max-height: 1100px) {
+    body.fake-land { --panel-l: 15rem; --panel-r: 13rem; }
+    body.fake-land #panel-left { left: 3vh; padding-bottom: 5.2rem; }
+    body.fake-land #panel-right { right: 3vh; min-height: 11rem; padding-bottom: 6rem; }
+    body.fake-land #reticle { width: 50px; height: 50px; }
+    body.fake-land #footer { display: none; }
+    body.fake-land .target { width: 10rem; }
+    body.fake-land #ctl-row { flex-wrap: wrap; }
+  }
+
   @media (max-width: 900px) {
     #results { max-height: 40vh; }
     #brand { right: .7rem; top: .7rem; gap: 0; }
@@ -440,17 +459,17 @@
   @media (pointer: coarse) {
     #stage { touch-action: none; }
     #tooltip { display: none; }
-    /* 虚拟摇杆：两侧边缘垂直居中，避开底部面板与中央仪表 */
+    /* 虚拟摇杆：两侧内收、中线下移，落在楔形面板让出的空区 */
     .joy {
-      display: block; position: fixed; top: 50%; transform: translateY(-50%);
+      display: block; position: fixed; top: 62%; transform: translateY(-50%);
       width: 6.5rem; height: 6.5rem; z-index: 8; border-radius: 50%;
       border: 1px solid rgba(242, 200, 75, .2);
       background: radial-gradient(circle, rgba(9, 15, 28, .3), rgba(9, 15, 28, .1) 72%);
       backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       touch-action: none;
     }
-    #joy-left { left: 1.2rem; }
-    #joy-right { right: 1.2rem; }
+    #joy-left { left: 4rem; }
+    #joy-right { right: 4rem; }
     .joy-nub {
       position: absolute; left: 50%; top: 50%; width: 2.6rem; height: 2.6rem;
       border-radius: 50%; border: 1px solid rgba(242, 200, 75, .5);
@@ -462,14 +481,23 @@
     .joy.drag .joy-nub { transition: none; }   /* 拖动中即时跟随 */
   }
 
-  /* 窄横屏摇杆避让：底部面板与两侧指示器挤占边缘，缩小并稍上移 */
+  /* 窄横屏摇杆避让：缩小、内收并下移，绕开槽位行与楔形面板 */
   @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
-    .joy { width: 5.6rem; height: 5.6rem; top: 45%; }
+    .joy { width: 5.6rem; height: 5.6rem; top: 60%; }
     .joy-nub { width: 2.2rem; height: 2.2rem; }
-    #joy-left { left: .8rem; }
-    #joy-right { right: .8rem; }
+    #joy-left { left: 2.6rem; }
+    #joy-right { right: 2.6rem; }
     /* 槽位随 JS 收窄的弧同步缩短，避开摇杆 */
     .target { width: 8rem; }
+  }
+
+  /* 伪横屏摇杆：等价窄横屏（旋转后的横向宽度即物理高度） */
+  @media (max-height: 1100px) {
+    body.fake-land .joy { width: 5.6rem; height: 5.6rem; top: 60%; }
+    body.fake-land .joy-nub { width: 2.2rem; height: 2.2rem; }
+    body.fake-land #joy-left { left: 2.6rem; }
+    body.fake-land #joy-right { right: 2.6rem; }
+    body.fake-land .target { width: 8rem; }
   }
 </style>
 </head>
@@ -491,6 +519,7 @@
   <polygon id="ring-glow"></polygon>
   <polygon id="ring"></polygon>
   <polygon id="hover-ring"></polygon>
+  <text id="ring-dist"></text>
 </svg>
 
 <svg id="hud" aria-hidden="true">
@@ -510,29 +539,24 @@
       <svg viewBox="0 0 24 24">
         <path d="M12 2c2.7 2.3 3.5 5.5 3.5 8.6V14h-7v-3.4C8.5 7.5 9.3 4.3 12 2z"/>
         <path d="M8.5 10.6 6 13.8V16h2.5M15.5 10.6l2.5 3.2V16h-2.5"/>
-        <path d="M12 16.6V21M8.7 16.6 7 20.2M15.3 16.6 17 20.2"/></svg>
-      <i class="lb">主推</i></span>
+        <path d="M12 16.6V21M8.7 16.6 7 20.2M15.3 16.6 17 20.2"/></svg></span>
     <span class="ic" id="ic-rcs" title="姿态喷口">
       <svg viewBox="0 0 24 24">
         <rect x="8.6" y="8.6" width="6.8" height="6.8"/>
         <path d="M9.4 5.4 12 2.8l2.6 2.6M9.4 18.6 12 21.2l2.6-2.6"/>
-        <path d="M5.4 9.4 2.8 12l2.6 2.6M18.6 9.4 21.2 12l-2.6 2.6"/></svg>
-      <i class="lb">姿态</i></span>
+        <path d="M5.4 9.4 2.8 12l2.6 2.6M18.6 9.4 21.2 12l-2.6 2.6"/></svg></span>
     <span class="ic" id="ic-auto" title="自动驾驶">
       <svg viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="8.6"/>
-        <path class="fl" d="M16 8 13.4 13.4 8 16l2.6-5.4z"/></svg>
-      <i class="lb">自动</i></span>
+        <path class="fl" d="M16 8 13.4 13.4 8 16l2.6-5.4z"/></svg></span>
     <span class="ic" id="ic-lock" title="目标锁定">
       <svg viewBox="0 0 24 24">
         <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/>
-        <circle class="fl" cx="12" cy="12" r="2.7"/></svg>
-      <i class="lb">锁定</i></span>
+        <circle class="fl" cx="12" cy="12" r="2.7"/></svg></span>
     <span class="ic" id="ic-rev" title="反向推进">
       <svg viewBox="0 0 24 24">
         <path d="M12 2.6v7.6M8.4 6.6l3.6 3.6 3.6-3.6"/>
-        <path d="M12 13.4 16.6 21H7.4z"/></svg>
-      <i class="lb">反推</i></span>
+        <path d="M12 13.4 16.6 21H7.4z"/></svg></span>
   </div>
 </div>
 <div id="speed-readout">0.0 <em>ly/s</em></div>
@@ -574,20 +598,7 @@
 
 <div id="tooltip"></div>
 
-<div id="rotate-overlay" aria-hidden="true">
-  <div class="ro-box">
-    <!-- 圆角矩形手机 + 环绕旋转箭头，圆心 (32,32) 半径 26 -->
-    <svg viewBox="0 0 64 64">
-      <rect x="24" y="15" width="16" height="34" rx="3.5"/>
-      <path d="M29 44.5h6"/>
-      <path d="M32 6 A26 26 0 0 1 58 32"/>
-      <path d="M54 28.5 58 33 61.5 28.5"/>
-      <path d="M32 58 A26 26 0 0 1 6 32"/>
-      <path d="M2.5 35.5 6 31 9.5 35.5"/>
-    </svg>
-    <p>请旋转手机 · 横屏体验完整仪表</p>
-  </div>
-</div>
+<div id="rotate-toast" hidden>旋转手机体验更佳</div>
 
 <div id="controls">
   <div id="ctl-row">

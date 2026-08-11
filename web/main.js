@@ -1,5 +1,41 @@
 import * as THREE from "three";
 
+/* ── 视口坐标层：触屏竖屏时 body 顺时针旋 90° 伪装横屏，
+   逻辑视口宽高与指针坐标一律经此层换算 ── */
+const fakeLandMq = matchMedia(
+  "(max-width: 900px) and (orientation: portrait) and (pointer: coarse)");
+function isFakeLand() { return fakeLandMq.matches; }
+function vw() { return isFakeLand() ? innerHeight : innerWidth; }
+function vh() { return isFakeLand() ? innerWidth : innerHeight; }
+// rotate(90deg) translateY(-100%) 的逆：x' = y，y' = W - x
+function toView(x, y) {
+  return isFakeLand() ? { x: y, y: innerWidth - x } : { x, y };
+}
+function evPos(e) { return toView(e.clientX, e.clientY); }
+
+document.body.classList.toggle("fake-land", isFakeLand());
+fakeLandMq.addEventListener("change", () => {
+  document.body.classList.toggle("fake-land", isFakeLand());
+});
+
+/* 伪横屏提示浮窗：8s 自动淡出，点击立即消失，提示过一次不再弹 */
+function showRotateToast() {
+  const toast = document.getElementById("rotate-toast");
+  if (!isFakeLand() || !toast.hidden) return;
+  try {
+    if (localStorage.getItem("hud.rotToast")) return;
+    localStorage.setItem("hud.rotToast", "1");
+  } catch { /* 隐私模式 */ }
+  toast.hidden = false;
+  requestAnimationFrame(() => toast.classList.add("on"));
+  const close = () => {
+    toast.classList.remove("on");
+    setTimeout(() => { toast.hidden = true; }, 700);
+  };
+  const timer = setTimeout(close, 8000);
+  toast.addEventListener("click", () => { clearTimeout(timer); close(); }, { once: true });
+}
+
 const SCENE_SCALE = 1 / 12;      // ly -> scene units
 const STAR_STRIDE = 6;           // gx, gy, gz, vt_mag, bv_color, label
 const EDGE_BASE = 0.006;         // resting opacity of the similarity graph
@@ -147,8 +183,9 @@ canvas.addEventListener("pointerdown", (e) => {
   if (isMouse && e.button !== 0 && e.button !== 2) return;
   const role = isMouse ? (e.button === 2 ? "orbit" : "pick") : "orbit";
   canvas.setPointerCapture(e.pointerId);
+  const pos = evPos(e);
   pointers.set(e.pointerId,
-    { x: e.clientX, y: e.clientY, moved: 0, type: e.pointerType, role });
+    { x: pos.x, y: pos.y, moved: 0, type: e.pointerType, role });
   dragging = true;
   resetPinch();
   clearHover();                 // 拖拽期间不更新悬停，留着会是个跟错星的虚框
@@ -157,10 +194,11 @@ canvas.addEventListener("pointerdown", (e) => {
 
 canvas.addEventListener("pointermove", (e) => {
   const p = pointers.get(e.pointerId);
-  if (!p) { if (canHover) hover(e.clientX, e.clientY); return; }
-  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  const pos = evPos(e);
+  if (!p) { if (canHover) hover(pos.x, pos.y); return; }
+  const dx = pos.x - p.x, dy = pos.y - p.y;
   p.moved += Math.abs(dx) + Math.abs(dy);
-  p.x = e.clientX; p.y = e.clientY;
+  p.x = pos.x; p.y = pos.y;
 
   if (pointers.size === 1) {
     if (p.role !== "orbit") return;      // 左键拖动不转视角
@@ -192,7 +230,8 @@ function endPointer(e, tap) {
   // 鼠标只认左键选中，右键松开不该顺手选一颗；触摸轻点照常选中
   const canPick = p.type === "mouse" ? p.role === "pick" : true;
   if (tap && canPick && p.moved < (TAP_SLOP[p.type] ?? 8)) {
-    pick(e.clientX, e.clientY, true);
+    const pos = evPos(e);
+    pick(pos.x, pos.y, true);
   }
 }
 canvas.addEventListener("pointerup", (e) => endPointer(e, true));
@@ -222,7 +261,7 @@ const panScratch = new THREE.Vector3();
 
 // 屏幕中心处 1px 对应的场景距离，手势像素输入用它换算 su
 function panWorldPerPixel() {
-  return (2 * cam.radius * Math.tan((camera.fov * Math.PI) / 360)) / innerHeight;
+  return (2 * cam.radius * Math.tan((camera.fov * Math.PI) / 360)) / vh();
 }
 
 // 沿屏幕平面平移视点，dx/dy 为场景单位。
@@ -273,8 +312,11 @@ for (const j of joys) {
   const move = (e) => {
     const r = j.el.getBoundingClientRect();
     const max = r.width / 2;
-    let dx = e.clientX - (r.left + max);
-    let dy = e.clientY - (r.top + max);
+    // rect 是物理视口坐标，圆心与指针都换进旋转坐标系再作差
+    const c = toView(r.left + max, r.top + max);
+    const p = evPos(e);
+    let dx = p.x - c.x;
+    let dy = p.y - c.y;
     const len = Math.hypot(dx, dy);
     if (len > max) { dx *= max / len; dy *= max / len; }
     setNub(dx, dy);
@@ -632,7 +674,7 @@ const tmp = new THREE.Vector3();
 let selected = -1, hovered = -1;
 
 function project() {
-  const w = innerWidth * 0.5, h = innerHeight * 0.5;
+  const w = vw() * 0.5, h = vh() * 0.5;
   for (let i = 0; i < N; i++) {
     tmp.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]).project(camera);
     visible[i] = tmp.z > -1 && tmp.z < 1 ? 1 : 0;
@@ -783,14 +825,14 @@ panelRO.observe(panelRight);
 
 // 触屏窄横屏时槽位弧向内收，给两侧边缘的摇杆让位
 function targetArcR() {
-  const base = innerWidth * 0.25;
-  return coarse && innerWidth <= 1100 && innerWidth > innerHeight
-    ? Math.min(base, Math.max(innerWidth / 2 - 250, 80)) : base;
+  const base = vw() * 0.25;
+  return coarse && vw() <= 1100 && vw() > vh()
+    ? Math.min(base, Math.max(vw() / 2 - 250, 80)) : base;
 }
 
 // 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
 function layoutTargets() {
-  const cx = innerWidth / 2, cy = innerHeight / 2;
+  const cx = vw() / 2, cy = vh() / 2;
   const R = targetArcR() + 6;   // 贴在弧的外侧
   const half = TARGET_MAX / 2;
   targetSlots.forEach((el, k) => {
@@ -843,6 +885,7 @@ const elLeader = document.getElementById("leader");
 const elRing = document.getElementById("ring");
 const elRingGlow = document.getElementById("ring-glow");
 const elHoverRing = document.getElementById("hover-ring");
+const elRingDist = document.getElementById("ring-dist");
 const RING_R = parseFloat(
   getComputedStyle(document.documentElement).getPropertyValue("--ring-r")) || 19;
 
@@ -857,27 +900,51 @@ function hexPoints(cx, cy, r) {
             .join(" ");
 }
 
+// 拖尾把星点画成滞后的质心，标记按瞬时投影走会脱节；
+// 用拖尾同源的 decay 做同步 EMA，decay=0（静止/防晕）时无平滑
+const mark = { sx: 0, sy: 0, hx: 0, hy: 0, sel: -1, hov: -1 };
+
 function updateMarker() {
+  const k = 1 - decay;
   // 悬停标记与选中标记同形同尺寸，只靠透明度区分；选中的那颗不重复画
   const showHover = hovered >= 0 && hovered !== selected && visible[hovered];
   if (showHover) {
-    elHoverRing.setAttribute("points", hexPoints(
-      projected[hovered * 2], projected[hovered * 2 + 1], RING_R));
+    const tx = projected[hovered * 2], ty = projected[hovered * 2 + 1];
+    if (mark.hov !== hovered) { mark.hx = tx; mark.hy = ty; mark.hov = hovered; }
+    else { mark.hx += (tx - mark.hx) * k; mark.hy += (ty - mark.hy) * k; }
+    elHoverRing.setAttribute("points", hexPoints(mark.hx, mark.hy, RING_R));
+  } else {
+    mark.hov = -1;
   }
   linkLayer.classList.toggle("hov", showHover);
 
   if (selected < 0 || !visible[selected]) {
+    mark.sel = -1;
     linkLayer.classList.remove("sel");
     return;
   }
-  const sx = projected[selected * 2], sy = projected[selected * 2 + 1];
+  const px = projected[selected * 2], py = projected[selected * 2 + 1];
+  if (mark.sel !== selected) { mark.sx = px; mark.sy = py; mark.sel = selected; }
+  else { mark.sx += (px - mark.sx) * k; mark.sy += (py - mark.sy) * k; }
+  const sx = mark.sx, sy = mark.sy;
   const pts = hexPoints(sx, sy, RING_R);
   elRing.setAttribute("points", pts);
   elRingGlow.setAttribute("points", pts);
 
+  // 距离标注挂在六边形右上角，su -> ly
+  const dLy = camera.position.distanceTo(starVec(selected)) / SCENE_SCALE;
+  elRingDist.textContent = `${dLy.toFixed(dLy >= 1000 ? 0 : 1)} ly`;
+  elRingDist.setAttribute("x", (sx + RING_R + 6).toFixed(1));
+  elRingDist.setAttribute("y", (sy - RING_R - 6).toFixed(1));
+
   // 引线从信息框朝向恒星的那条边引出，止于六边形边缘。
   // 用射线与矩形求交，桌面端的左侧卡片和移动端的底部抽屉都能自然出线。
-  const box = panelLeft.getBoundingClientRect();
+  let box = panelLeft.getBoundingClientRect();
+  // 旋转 body 下 rect 是物理视口坐标，轴对齐换算回旋转坐标系
+  if (isFakeLand()) {
+    box = { left: box.top, top: innerWidth - box.right,
+            width: box.height, height: box.width };
+  }
   const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
   const vx = sx - cx, vy = sy - cy;
   const hw = box.width / 2 || 1, hh = box.height / 2 || 1;
@@ -1453,7 +1520,7 @@ function arcPath(cx, cy, r, d0, d1) {
 
 let hudGeom = null;
 function layoutHud() {
-  const w = innerWidth, h = innerHeight;
+  const w = vw(), h = vh();
   hudSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   // 圆心仍在屏幕中心略上方；半径缩到 1/3 后再高就会和准星叠在一起
   const cx = w / 2, cy = h * 0.48;
@@ -1486,8 +1553,8 @@ function layoutHud() {
   // 攻击指示器的内圈弧，贴在槽位弧的内侧
   const rt = targetArcR();
   const half = TARGET_SPREAD / 2;
-  arcTgtL.setAttribute("d", arcPath(cx, innerHeight / 2, rt, 180 - half, 180 + half));
-  arcTgtR.setAttribute("d", arcPath(cx, innerHeight / 2, rt, -half, half));
+  arcTgtL.setAttribute("d", arcPath(cx, vh() / 2, rt, 180 - half, 180 + half));
+  arcTgtR.setAttribute("d", arcPath(cx, vh() / 2, rt, -half, half));
 }
 
 let shownSpeed = 0;
@@ -1549,7 +1616,7 @@ bgm.addEventListener("pause", refreshBgmName);
 /* ── 主循环 ─────────────────────────────────────────── */
 
 function resize() {
-  const w = innerWidth, h = innerHeight;
+  const w = vw(), h = vh();
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -1562,7 +1629,10 @@ function resize() {
   syncSkew();
 }
 addEventListener("resize", resize);
+// 伪横屏切换等同一次视口尺寸变化
+fakeLandMq.addEventListener("change", () => { resize(); showRotateToast(); });
 resize();
+showRotateToast();
 
 let prev = performance.now();
 let decay = 0;
