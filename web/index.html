@@ -95,6 +95,11 @@
   /* 空心三角：节流目标档位游标 */
   #hud .set { fill: none; stroke: var(--accent); stroke-width: 1.4; opacity: .85; }
   #hud.rev #speed-mark { fill: #ff9a6b; filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
+  /* 指向线操控：中心到光标的连线 + 端点圈，按住才显示 */
+  #steer-line { stroke: var(--reticle); stroke-width: 1.2; stroke-dasharray: 2 5;
+                opacity: 0; transition: opacity .15s ease; }
+  #steer-dot  { fill: var(--reticle); opacity: 0; transition: opacity .15s ease; }
+  #hud.steering #steer-line, #hud.steering #steer-dot { opacity: .7; }
 
   #hud-labels {
     position: fixed; left: 0; right: 0; z-index: 7;
@@ -621,6 +626,8 @@
   <polygon id="speed-set" class="set"></polygon>
   <path id="arc-tgt-l" class="tgt-arc"></path>
   <path id="arc-tgt-r" class="tgt-arc"></path>
+  <line id="steer-line"></line>
+  <circle id="steer-dot" r="4"></circle>
 </svg>
 
 <div id="hud-labels">

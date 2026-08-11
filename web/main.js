@@ -66,7 +66,11 @@ const cam = {
   theta: 0.7, phi: 1.22, radius: 160,
   goalTheta: 0.7, goalPhi: 1.22, goalRadius: 160,
   minRadius: 2, maxRadius: 420,
+  roll: 0,   // 纯视觉滚转（rad），只改 up 向量，不进 goal 追赶体系
 };
+const camDir = new THREE.Vector3();
+const camRight = new THREE.Vector3();
+const camUp = new THREE.Vector3();
 
 /* 引擎绝对规格（场景单位 su，1 su = 12 ly）：矢量喷口（RCS）管转向与平移，
    主引擎管径向推进，前进与倒车上限不对称。手动与自动同一套引擎。 */
@@ -161,6 +165,17 @@ function applyCamera(dt) {
     cam.target.y + cam.radius * Math.cos(cam.phi),
     cam.target.z + cam.radius * sp * Math.cos(cam.theta),
   );
+  // 滚转是纯视觉的机身绕视轴转动，不碰 theta/phi/target：
+  // 先按世界系求出中性的右/上基向量，再绕视线把 up 转过 cam.roll
+  camDir.copy(cam.target).sub(camera.position).normalize();
+  if (Math.abs(camDir.y) < 0.999) {
+    camRight.crossVectors(camDir, FLIP_UP).normalize();
+  } else {
+    camRight.copy(FLIP_RIGHT);
+  }
+  camUp.crossVectors(camRight, camDir).normalize();
+  camera.up.copy(camUp).multiplyScalar(Math.cos(cam.roll))
+    .addScaledVector(camRight, Math.sin(cam.roll));
   camera.lookAt(cam.target);
 }
 
@@ -205,11 +220,8 @@ canvas.addEventListener("pointermove", (e) => {
   p.x = pos.x; p.y = pos.y;
 
   if (pointers.size === 1) {
-    if (p.role !== "orbit") return;      // 左键拖动不转视角
-    // 拖拽同样绕机位转视线（不再绕选中目标公转）：像素折算成待消化转角，
-    // 由姿态引擎按 RCS 限速执行，方向沿用旧手感
-    dragTurn.yaw = THREE.MathUtils.clamp(dragTurn.yaw - dx * 0.0042, -0.9, 0.9);
-    dragTurn.pitch = THREE.MathUtils.clamp(dragTurn.pitch - dy * 0.0042, -0.9, 0.9);
+    // 转向不再是拖拽增量：右键/单指按住即指向线操控，位置已在上面更新，
+    // 每帧由 pointerSteerStep() 按当前位置与中心的距离转向（见下方）
   } else if (pointers.size === 2) {
     const s = pinchState();
     if (pinch) {
@@ -242,9 +254,42 @@ function endPointer(e, tap) {
 }
 canvas.addEventListener("pointerup", (e) => endPointer(e, true));
 canvas.addEventListener("pointercancel", (e) => endPointer(e, false));
-/* WASD 姿态键：AD 偏航、WS 俯仰，机位不动只转视线 */
+
+/* 鼠标中键：按下立即清速度；按住不放超过阈值则持续转向银心，松开即停。
+   不进 pointers 表，与左右键的选中/指向线互不相扰。 */
+let midHeld = false, midTimer = null, steerCenter = false;
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType !== "mouse" || e.button !== 1) return;
+  e.preventDefault();
+  midHeld = true;
+  throttle.gear = 0; throttle.v = 0;
+  midTimer = setTimeout(() => { if (midHeld) steerCenter = true; }, 350);
+});
+addEventListener("pointerup", (e) => {
+  if (e.pointerType !== "mouse" || e.button !== 1) return;
+  midHeld = false; steerCenter = false;
+  clearTimeout(midTimer);
+});
+addEventListener("blur", () => { midHeld = false; steerCenter = false; clearTimeout(midTimer); });
+
+// 银心方向在相机系里的左右/上下分量，接近时收窄输入，转到位就停，不来回摆
+function steerCenterStep() {
+  if (!steerCenter) return;
+  attLook.copy(camera.position).negate();   // 相机 -> 银心（原点）
+  const dist = attLook.length();
+  if (dist < 1e-3) return;
+  attLook.divideScalar(dist);
+  const right = attLook.dot(camRight), up = attLook.dot(camUp);
+  const strength = Math.min(Math.hypot(right, up) / 0.15, 1);
+  att.inYaw -= right * strength;
+  att.inPitch += up * strength;
+}
+
+/* WASD 姿态键：AD 滚转、WS 俯仰，机位不动只转视线/机身 */
 const held = new Set();
-const ATT_KEYS = { KeyW: "pitchU", KeyS: "pitchD", KeyA: "yawL", KeyD: "yawR" };
+// AD 是滚筒转动（绕视轴 roll），不是转向；WS 仍是俯仰。
+// 转向（偏航）交给右键/触屏的指向线操控与右摇杆
+const ATT_KEYS = { KeyW: "pitchU", KeyS: "pitchD", KeyA: "rollL", KeyD: "rollR" };
 const panRight = new THREE.Vector3();
 const panUp = new THREE.Vector3();
 
@@ -297,11 +342,11 @@ function leashRadius() {
    节流阀：滚轮/左杆改目标速度档位，v 收敛后沿视线平移 target。 */
 const FLIP_UP = new THREE.Vector3(0, 1, 0);
 const FLIP_RIGHT = new THREE.Vector3(1, 0, 0);
-const att = { yaw: 0, pitch: 0, inYaw: 0, inPitch: 0 };   // rad/s 与本帧杆量
-const dragTurn = { yaw: 0, pitch: 0 };   // 拖拽待消化转角（rad），按引擎限速消化
+const att = { yaw: 0, pitch: 0, roll: 0, inYaw: 0, inPitch: 0 };   // rad/s 与本帧杆量
 const throttle = { gear: 0, v: 0 };                        // su/s，带符号
+// 低速段更密：档位间隔随速度增大，转向/巡航贴近的低速区能精细停靠
 const GEAR_STEPS =
-  [-100, 0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000];  // ly/s
+  [-100, -50, -20, 0, 10, 25, 50, 100, 175, 275, 400, 550, 775, 1000];  // ly/s
 const GEAR_MIN = GEAR_STEPS[0] * SCENE_SCALE;
 const GEAR_MAX = GEAR_STEPS[GEAR_STEPS.length - 1] * SCENE_SCALE;
 const attPos = new THREE.Vector3();
@@ -322,37 +367,46 @@ function shiftGear(dir) {
   }
 }
 
+const TWO_PI = Math.PI * 2;
+// roll 是循环量，钳到 (-π,π] 再用；这样自动模式的衰减总走最短弧回正，
+// 也让 cos/sin(roll) 在环绕处连续，360° 连转不会卡顿或跳变
+function wrapPi(a) {
+  a = ((a % TWO_PI) + TWO_PI) % TWO_PI;
+  return a > Math.PI ? a - TWO_PI : a;
+}
+
 function attitudeStep(dt) {
   if (auto.on || auto.assist) {
-    att.yaw = 0; att.pitch = 0; att.inYaw = 0; att.inPitch = 0;
-    dragTurn.yaw = 0; dragTurn.pitch = 0;
+    att.yaw = 0; att.pitch = 0; att.roll = 0; att.inYaw = 0; att.inPitch = 0;
+    // 自动接管时机身按最短弧自动回正，不再手动保持滚转
+    if (cam.roll) {
+      const r = wrapPi(cam.roll) * Math.pow(0.02, dt);
+      cam.roll = Math.abs(r) > 1e-4 ? r : 0;
+    }
     return;
   }
-  const iy = THREE.MathUtils.clamp(att.inYaw
-    + (held.has("yawL") ? 1 : 0) - (held.has("yawR") ? 1 : 0), -1, 1);
+  const iy = THREE.MathUtils.clamp(att.inYaw, -1, 1);
   const ip = THREE.MathUtils.clamp(att.inPitch
     + (held.has("pitchU") ? 1 : 0) - (held.has("pitchD") ? 1 : 0), -1, 1);
+  const ir = (held.has("rollR") ? 1 : 0) - (held.has("rollL") ? 1 : 0);
   att.inYaw = 0; att.inPitch = 0;
   const lim = ENGINE.rcs.angAccel * MANUAL_BOOST * dt;
   const cap = ENGINE.rcs.angMax * MANUAL_BOOST;
   att.yaw += THREE.MathUtils.clamp(iy * cap - att.yaw, -lim, lim);
   att.pitch += THREE.MathUtils.clamp(ip * cap - att.pitch, -lim, lim);
-  // 拖拽缓冲按同一限速消化，与按键/摇杆共用绕机位旋转
-  const capd = cap * dt;
-  const dyaw = THREE.MathUtils.clamp(dragTurn.yaw, -capd, capd);
-  const dpit = THREE.MathUtils.clamp(dragTurn.pitch, -capd, capd);
-  dragTurn.yaw -= dyaw; dragTurn.pitch -= dpit;
-  if (!att.yaw && !att.pitch && !dyaw && !dpit) return;
+  att.roll += THREE.MathUtils.clamp(ir * cap - att.roll, -lim, lim);
+  if (att.roll) cam.roll = wrapPi(cam.roll + att.roll * dt);
+  if (!att.yaw && !att.pitch) return;
 
-  // 机位与单位视线；偏航绕世界 Y，俯仰绕视线右轴
+  // 机位与单位视线；偏航绕世界 Y，俯仰绕视线右轴（滚转只改 up，不进这里）
   const sp = Math.sin(cam.phi);
   attPos.set(
     cam.target.x + cam.radius * sp * Math.sin(cam.theta),
     cam.target.y + cam.radius * Math.cos(cam.phi),
     cam.target.z + cam.radius * sp * Math.cos(cam.theta));
   attDir.copy(cam.target).sub(attPos).divideScalar(cam.radius);
-  const yawA = att.yaw * dt + dyaw;
-  const pitA = att.pitch * dt + dpit;
+  const yawA = att.yaw * dt;
+  const pitA = att.pitch * dt;
   if (yawA) attDir.applyAxisAngle(FLIP_UP, yawA);
   if (pitA) {
     // 单帧俯仰量夹在极区外：视线不越顶，反解 theta 不会翻 π
@@ -476,6 +530,39 @@ function joyStep(dt) {
       throttle.gear - jl.vy * dt * 400 * SCENE_SCALE, GEAR_MIN, GEAR_MAX);
   }
   if (jr.vx || jr.vy) { att.inYaw -= jr.vx; att.inPitch -= jr.vy; }
+}
+
+/* ── 指向线操控：右键/触屏单指按住不放，转向由「光标与屏幕中心的
+   距离」决定，而不是拖拽增量——按住不动也会持续转，越靠边转得越快。
+   与右摇杆共用 att.inYaw/inPitch 这条输入线路，每帧读当前指针位置。 */
+const elSteerLine = document.getElementById("steer-line");
+const elSteerDot = document.getElementById("steer-dot");
+const STEER_DEAD = 10;   // px，中心附近的死区，免得手抖乱转
+
+function pointerSteerStep() {
+  // 单指/右键持续按住时才转向；捏合（两指）与左键选中都不算
+  let p = null;
+  if (pointers.size === 1) {
+    const only = pointers.values().next().value;
+    if (only.role === "orbit") p = only;
+  }
+  if (!p) {
+    if (hudSvg.classList.contains("steering")) hudSvg.classList.remove("steering");
+    return;
+  }
+  const cx = vw() / 2, cy = vh() / 2;
+  const dx = p.x - cx, dy = p.y - cy;
+  const dist = Math.hypot(dx, dy);
+  hudSvg.classList.add("steering");
+  elSteerLine.setAttribute("x1", cx.toFixed(1)); elSteerLine.setAttribute("y1", cy.toFixed(1));
+  elSteerLine.setAttribute("x2", p.x.toFixed(1)); elSteerLine.setAttribute("y2", p.y.toFixed(1));
+  elSteerDot.setAttribute("cx", p.x.toFixed(1)); elSteerDot.setAttribute("cy", p.y.toFixed(1));
+  if (dist < STEER_DEAD) return;
+  // 死区外线性爬升到量程半径的 35% 处封顶，方向即光标偏移方向
+  const R = 0.35 * Math.min(vw(), vh());
+  const f = Math.min((dist - STEER_DEAD) / (R - STEER_DEAD), 1);
+  att.inYaw -= (dx / dist) * f;
+  att.inPitch -= (dy / dist) * f;
 }
 
 // 滚轮切档：累计 deltaY 约一格换一档，触发即清零，触控板不会一次跳多档
@@ -1355,11 +1442,12 @@ function panorama(holdSec, arcTheta = 0) {
   ];
 }
 
+const APPROACH_LY = 8.12;   // 自动逼近固定停在这个距离，不再随当前半径浮动
+
 // 手动点选后的辅助驾驶：同一套分段送达，无 orbit 段，任何主动操作打断
 function startAssist(i) {
-  const finalR = Math.max(cam.minRadius, Math.min(cam.goalRadius, 26));
   auto.assist = true;
-  startSegs(flyTo(starVec(i), finalR, 0));
+  startSegs(flyTo(starVec(i), APPROACH_LY * SCENE_SCALE, 0));
 }
 
 // 只在决策瞬间线性扫一次全表，禁止逐帧
@@ -1682,9 +1770,11 @@ const ICONS = Object.fromEntries(["main", "rcs", "auto", "lock", "rev"]
 const A_SPAN = 90, A_MID = 90;
 const A0 = A_MID + A_SPAN / 2;   // 左端（倒车满）
 const A1 = A_MID - A_SPAN / 2;   // 右端（前进满）
-// 零点放在弧长 1/4 处：倒车用得少，正向该占四分之三
-const A_ZERO = A0 + (A1 - A0) / 4;
+// 零点放在弧长 1/5 处：倒车上限只有 100 ly/s，不该占太多刻度
+const A_ZERO = A0 + (A1 - A0) / 5;
 const SPEED_FULL = 1000;         // 量程上限 ly/s，即主引擎前进上限
+const REV_FULL = 100;            // 倒车上限 ly/s，独立归一才能把 1/5 区占满
+const SPEED_GAMMA = 0.42;        // <1 使低速段更精细，指针在起步阶段更敏感
 
 const polar = (cx, cy, r, deg) => {
   const a = (deg * Math.PI) / 180;
@@ -1745,9 +1835,11 @@ function updateHud(signedSpeed, dt, angRate, radRateSmooth) {
 
   // 阻尼：时间常数固定，指针跟得慢一点、有配重感
   shownSpeed += (signedSpeed - shownSpeed) * (1 - Math.pow(0.05, dt));
-  // 开方压缩量程，低速段才有分辨率；符号决定落在中点的哪一侧
+  // 幂压缩量程（指数 <1），低速段分辨率更高；正反各自按自己的上限归一，
+  // 倒车才能在只占 1/5 弧长的区间里也走到底
   const arcOf = (v) => {
-    const mag = THREE.MathUtils.clamp(Math.sqrt(Math.abs(v) / SPEED_FULL), 0, 1);
+    const full = v >= 0 ? SPEED_FULL : REV_FULL;
+    const mag = THREE.MathUtils.clamp(Math.pow(Math.abs(v) / full, SPEED_GAMMA), 0, 1);
     const f = Math.sign(v) * mag;
     return f >= 0 ? A_ZERO + (A1 - A_ZERO) * f : A_ZERO + (A_ZERO - A0) * f;
   };
@@ -1842,7 +1934,9 @@ function frame(now) {
   stepAuto();
   if (opt.spin && !dragging && held.size === 0 && !auto.on && !joyActive)
     cam.goalTheta += dt * 0.012;
-  joyStep(dt);      // 杆量先落进姿态/节流输入
+  joyStep(dt);          // 杆量先落进姿态/节流输入
+  pointerSteerStep();   // 指向线同一路输入
+  steerCenterStep();    // 中键长按转向银心，同一路输入
   attitudeStep(dt);
   throttleStep(dt);
   applyCamera(dt);
