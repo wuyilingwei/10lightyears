@@ -1110,6 +1110,7 @@ const optsBox = document.getElementById("opts");
 const OPTS = {
   reticle: ["o-reticle", "no-reticle", true],
   targets: ["o-targets", "no-targets", true],
+  navball: ["o-navball", "no-navball", true],
   footer: ["o-footer", "no-footer", true],
   spin: ["o-spin", null, true],
   safe: ["o-safe", null, false],
@@ -1557,18 +1558,36 @@ function escapeHtml(s) {
 const haystack = tracks.map((t) =>
   `${t.t}${t.a}${t.s}${t.u}`.toLowerCase());
 
+/* 延长药丸：点放大镜后药丸自身横向展开露出内嵌输入框，
+   再点/Esc/失焦收回；收起时清空输入并藏结果 */
+const searchWrap = document.getElementById("search-wrap");
 const searchBtn = document.getElementById("search-btn");
-const searchBox = document.getElementById("search-box");
-searchBtn.addEventListener("click", () => {
-  const on = !searchBox.classList.contains("on");
-  searchBox.classList.toggle("on", on);
-  searchBtn.classList.toggle("on", on);
-  if (on) document.getElementById("search").focus();
-});
-
 const elSearch = document.getElementById("search");
 const elResults = document.getElementById("results");
 let hits = [], cursor = -1;
+
+function openSearch() {
+  searchWrap.classList.add("on");
+  elSearch.focus();
+}
+
+function closeSearch() {
+  searchWrap.classList.remove("on");
+  elSearch.value = "";
+  hits = []; cursor = -1;
+  elResults.classList.remove("on");
+  if (document.activeElement === elSearch) elSearch.blur();
+}
+
+searchBtn.addEventListener("click", () => {
+  if (searchWrap.classList.contains("on")) closeSearch();
+  else openSearch();
+});
+// 药丸内按下不抢输入框焦点：失焦收起才不会被按钮/结果行误触发
+searchWrap.addEventListener("pointerdown", (e) => {
+  if (e.target !== elSearch) e.preventDefault();
+});
+elSearch.addEventListener("blur", () => closeSearch());
 
 function highlight(text, q) {
   const i = text.toLowerCase().indexOf(q);
@@ -1623,8 +1642,7 @@ elSearch.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (hits.length) chooseHit(hits[cursor >= 0 ? cursor : 0]);
   } else if (e.key === "Escape") {
-    elSearch.value = ""; elResults.classList.remove("on"); elSearch.blur();
-    searchBox.classList.remove("on"); searchBtn.classList.remove("on");
+    closeSearch();
   }
 });
 elResults.addEventListener("click", (e) => {
@@ -1634,8 +1652,7 @@ elResults.addEventListener("click", (e) => {
 addEventListener("keydown", (e) => {
   if (e.key === "/" && document.activeElement !== elSearch) {
     e.preventDefault();
-    searchBox.classList.add("on"); searchBtn.classList.add("on");
-    elSearch.focus();
+    openSearch();
   }
 });
 
@@ -1828,6 +1845,7 @@ function frame(now) {
   applyCamera(dt);
   project();
   updateMarker();
+  renderNavBall();
 
   // 位移除以轨道半径 -> 角速度，与场景尺度无关，推拉和旋转都能算进去。
   // 同一个位移量再作为速度矢量喂给着色器，用于逐星的视向多普勒偏移。
@@ -1899,4 +1917,151 @@ if (document.documentElement.requestFullscreen) {
   document.addEventListener("fullscreenchange", () => {
     fsBtn.classList.toggle("on", !!document.fullscreenElement);
   });
+}
+
+/* ── 姿态指示器：底部中央圆形仪表 ─────────────────────
+   独立小渲染器渲到 #attitude；场景根节点每帧取主相机四元数的共轭，
+   世界在仪表中反向旋转，等价机头姿态仪（含滚转）。
+   正交相机近远平面裁掉背半球，环与点云只显示面朝的一侧；
+   到目标的指向线走全量程相机（layer 1），背向时也保留投影方向。 */
+const navCanvas = document.getElementById("attitude");
+const navRenderer = new THREE.WebGLRenderer(
+  { canvas: navCanvas, antialias: true, alpha: true });
+navRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+navRenderer.autoClear = false;
+const navScene = new THREE.Scene();
+const navRoot = new THREE.Group();
+navScene.add(navRoot);
+const navCam = new THREE.OrthographicCamera(-1.12, 1.12, 1.12, -1.12, -0.03, 1.2);
+const navCamFull = new THREE.OrthographicCamera(-1.12, 1.12, 1.12, -1.12, -1.2, 1.2);
+navCamFull.layers.set(1);
+
+// 银道水平面：XZ 参考圆环 + 十字细线
+const NAV_R = 0.95;
+const navRing = new THREE.BufferGeometry().setFromPoints(
+  Array.from({ length: 65 }, (_, k) => {
+    const a = (k / 64) * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(a) * NAV_R, 0, Math.sin(a) * NAV_R);
+  }));
+navRoot.add(new THREE.Line(navRing, new THREE.LineBasicMaterial(
+  { color: 0x93b6d4, transparent: true, opacity: 0.5 })));
+const navCross = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-NAV_R, 0, 0), new THREE.Vector3(NAV_R, 0, 0),
+  new THREE.Vector3(0, 0, -NAV_R), new THREE.Vector3(0, 0, NAV_R),
+]);
+navRoot.add(new THREE.LineSegments(navCross, new THREE.LineBasicMaterial(
+  { color: 0x93b6d4, transparent: true, opacity: 0.2 })));
+
+// XYZ 短轴线与端点：X/Z 蓝灰、Y（银道法向）金色
+const NAV_AXES = [
+  [new THREE.Vector3(1, 0, 0), 0x7ea8cc],
+  [new THREE.Vector3(0, 1, 0), 0xf2c84b],
+  [new THREE.Vector3(0, 0, 1), 0x7ea8cc],
+];
+const navTipPos = [];
+const navTipCol = [];
+for (const [dir, color] of NAV_AXES) {
+  const g = new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(), dir.clone().multiplyScalar(0.55)]);
+  navRoot.add(new THREE.Line(g, new THREE.LineBasicMaterial(
+    { color, transparent: true, opacity: 0.85 })));
+  navTipPos.push(dir.x * 0.55, dir.y * 0.55, dir.z * 0.55);
+  const c = new THREE.Color(color);
+  navTipCol.push(c.r, c.g, c.b);
+}
+const navTips = new THREE.BufferGeometry();
+navTips.setAttribute("position",
+  new THREE.BufferAttribute(new Float32Array(navTipPos), 3));
+navTips.setAttribute("color",
+  new THREE.BufferAttribute(new Float32Array(navTipCol), 3));
+navRoot.add(new THREE.Points(navTips, new THREE.PointsMaterial(
+  { size: 3, sizeAttenuation: false, vertexColors: true,
+    transparent: true, opacity: 0.95, depthWrite: false })));
+
+// 星团抽样微点云：按方向投到单位球面，方向感参照，几何一次构建
+const navStride = Math.max(1, Math.round(N / 400));
+const navStars = [];
+for (let i = 0; i < N; i += navStride) {
+  const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+  const l = Math.hypot(x, y, z);
+  if (l < 1e-4) continue;
+  navStars.push((x / l) * 0.92, (y / l) * 0.92, (z / l) * 0.92);
+}
+const navCloud = new THREE.BufferGeometry();
+navCloud.setAttribute("position",
+  new THREE.BufferAttribute(new Float32Array(navStars), 3));
+navRoot.add(new THREE.Points(navCloud, new THREE.PointsMaterial(
+  { color: 0xcfe0f2, size: 1, sizeAttenuation: false,
+    transparent: true, opacity: 0.38, depthWrite: false })));
+
+// 到目标的金色指向线：选中时从球心指向该星方向
+const navTgtGeom = new THREE.BufferGeometry();
+navTgtGeom.setAttribute("position",
+  new THREE.BufferAttribute(new Float32Array(6), 3));
+const navTgt = new THREE.Line(navTgtGeom, new THREE.LineBasicMaterial(
+  { color: 0xf2c84b, transparent: true, opacity: 0.9 }));
+navTgt.layers.set(1);
+navTgt.visible = false;
+navRoot.add(navTgt);
+
+const navDir = new THREE.Vector3();
+let navW = 0, navH = 0;
+
+function renderNavBall() {
+  if (!opt.navball) return;
+  const w = navCanvas.clientWidth, h = navCanvas.clientHeight;
+  if (!w || !h) return;
+  if (w !== navW || h !== navH) {
+    navW = w; navH = h;
+    navRenderer.setSize(w, h, false);
+  }
+  navRoot.quaternion.copy(camera.quaternion).invert();
+  if (selected >= 0) {
+    navDir.set(positions[selected * 3], positions[selected * 3 + 1],
+               positions[selected * 3 + 2]).sub(camera.position);
+    const l = navDir.length();
+    navTgt.visible = l > 1e-4;
+    if (navTgt.visible) {
+      navDir.multiplyScalar(NAV_R / l);
+      const a = navTgtGeom.getAttribute("position");
+      a.setXYZ(1, navDir.x, navDir.y, navDir.z);
+      a.needsUpdate = true;
+    }
+  } else {
+    navTgt.visible = false;
+  }
+  navRenderer.clear(true, true, true);
+  navRenderer.render(navScene, navCam);
+  navRenderer.render(navScene, navCamFull);
+}
+
+/* ── 操作指南弹窗：首访自动弹出，显示菜单可重开 ──────── */
+const helpModal = document.getElementById("help-modal");
+const helpClose = document.getElementById("help-close");
+const helpOpen = document.getElementById("help-open");
+
+function openHelp() { helpModal.hidden = false; }
+function closeHelp() { helpModal.hidden = true; }
+
+helpClose.addEventListener("click", closeHelp);
+helpModal.addEventListener("click", (e) => {
+  if (e.target === helpModal) closeHelp();
+});
+helpOpen.addEventListener("click", () => {
+  optsBox.classList.remove("on");
+  optBtn.classList.remove("on");
+  openHelp();
+});
+// 弹窗打开期间捕获按键：Esc 关闭，其余不落到飞行/搜索快捷键
+addEventListener("keydown", (e) => {
+  if (helpModal.hidden) return;
+  if (e.key === "Escape") closeHelp();
+  e.stopPropagation();
+}, true);
+
+let helpSeen = false;
+try { helpSeen = !!localStorage.getItem("hud.helpSeen"); } catch { /* 隐私模式 */ }
+if (!helpSeen) {
+  try { localStorage.setItem("hud.helpSeen", "1"); } catch { /* 隐私模式 */ }
+  openHelp();
 }

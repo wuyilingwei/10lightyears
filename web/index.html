@@ -174,7 +174,6 @@
     transform: perspective(1100px) rotateY(var(--tilt-r));
     transform-origin: right center; }
   /* 伪横屏下视口单位互换：逻辑横向用 vh、纵向用 vw */
-  body.fake-land #search-box { width: min(22rem, 26vh); }
   body.fake-land #results { max-height: 40vw; }
 
   #cover {
@@ -246,26 +245,37 @@
   .target.left .t { text-align: right; }
   .target.right .t { text-align: left; }
 
-  /* ── 搜索：常规圆角边框 ───────────────────────────── */
-  #search-wrap { position: relative; z-index: 8; }
-  #search-btn { padding: .4rem .62rem; }
-  #search-box { display: none; position: absolute; left: 0; top: 2.3rem; width: min(22rem, 26vw); }
-  #search-box.on { display: block; }
-  #search {
-    width: 100%; padding: .5rem .9rem;
-    background: rgba(8, 14, 26, .7); color: var(--text);
+  /* ── 搜索：延长药丸，点击放大镜横向展开露出内嵌输入框 ── */
+  #search-wrap {
+    position: relative; z-index: 8;
+    display: flex; align-items: center;
+    background: rgba(8, 14, 26, .7);
     border: 1px solid rgba(242, 200, 75, .26); border-radius: 999px;
-    font: inherit; font-size: .74rem; letter-spacing: .04em;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    outline: none; transition: border-color .2s, box-shadow .2s;
+    transition: border-color .2s, box-shadow .2s;
   }
-  #search::placeholder { color: var(--text-dim); }
-  #search:focus {
+  #search-wrap:hover { border-color: rgba(242, 200, 75, .5); }
+  #search-wrap.on {
     border-color: rgba(242, 200, 75, .6);
     box-shadow: 0 0 0 3px rgba(242, 200, 75, .10);
   }
+  #search-btn {
+    display: flex; align-items: center; padding: .4rem .62rem;
+    background: none; border: 0; color: var(--text-dim);
+    font: inherit; cursor: pointer; transition: color .2s;
+  }
+  #search-btn:hover, #search-wrap.on #search-btn { color: var(--accent); }
+  #search {
+    width: 13rem; max-width: 0; min-width: 0; padding: 0; opacity: 0;
+    background: none; border: 0; outline: none;
+    color: var(--text); font: inherit; font-size: .68rem; letter-spacing: .04em;
+    transition: max-width .28s ease, opacity .2s ease, padding .28s ease;
+  }
+  #search-wrap.on #search { max-width: 13rem; opacity: 1; padding: .4rem .9rem .4rem 0; }
+  #search::placeholder { color: var(--text-dim); }
   #results {
-    margin-top: .45rem; max-height: 52vh; overflow-y: auto;
+    position: absolute; left: 0; top: calc(100% + .45rem);
+    width: min(16rem, 70vw); max-height: 52vh; overflow-y: auto;
     background: rgba(7, 12, 23, .88); border: 1px solid rgba(242, 200, 75, .18);
     border-radius: 12px; display: none;
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -286,6 +296,65 @@
   .hit mark { background: none; color: var(--accent); }
   #results .none { padding: .6rem .8rem; font-size: .66rem; color: var(--text-dim); }
 
+  /* ── 姿态指示器：底部中央圆形仪表 ─────────────────── */
+  #attitude {
+    position: fixed; left: 50%; bottom: 1.2rem; z-index: 6;
+    width: 8.5rem; height: 8.5rem; transform: translateX(-50%);
+    border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle at 50% 42%,
+      rgba(12, 20, 36, .5), rgba(6, 10, 20, .68));
+    border: 1px solid rgba(242, 200, 75, .3);
+    box-shadow: inset 0 0 16px rgba(4, 6, 13, .55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+
+  /* ── 操作指南弹窗 ─────────────────────────────────── */
+  #help-modal {
+    position: fixed; inset: 0; z-index: 30;
+    display: grid; place-items: center;
+    background: rgba(3, 5, 11, .55);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  #help-modal[hidden] { display: none; }
+  #help-modal:not([hidden]) { animation: help-in .25s ease; }
+  @keyframes help-in { from { opacity: 0; } }
+  #help-panel {
+    position: relative; width: min(24rem, 86vw);
+    max-height: 84vh; overflow-y: auto;
+    padding: 1.4rem 1.6rem 1.4rem;
+    background: linear-gradient(160deg, rgba(10, 17, 31, .94), rgba(7, 11, 21, .92));
+    border: 1px solid rgba(242, 200, 75, .4); border-radius: 14px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    scrollbar-width: thin; scrollbar-color: rgba(242,200,75,.3) transparent;
+  }
+  #help-panel h2 {
+    margin: 0 0 .5rem; font-size: .82rem; font-weight: 600;
+    letter-spacing: .3em; color: var(--accent);
+    text-shadow: 0 0 10px rgba(242, 200, 75, .35);
+  }
+  #help-close {
+    position: absolute; right: .9rem; top: .95rem;
+    width: 1.5rem; height: 1.5rem; display: grid; place-items: center;
+    border: 1px solid rgba(242, 200, 75, .3); border-radius: 50%;
+    background: none; color: var(--text-dim);
+    font: inherit; font-size: .78rem; line-height: 1; cursor: pointer;
+    transition: color .2s, border-color .2s;
+  }
+  #help-close:hover { color: var(--accent); border-color: rgba(242, 200, 75, .6); }
+  .help-grp {
+    margin: .8rem 0 .2rem; font-size: .56rem; letter-spacing: .24em;
+    color: var(--accent); opacity: .8;
+  }
+  .help-row {
+    display: flex; justify-content: space-between; gap: .8rem;
+    font-size: .62rem; line-height: 2;
+  }
+  .help-row span { color: var(--text-dim); letter-spacing: .13em; flex: none; }
+  .help-row b {
+    color: var(--text); font-weight: 500; text-align: right;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   /* ── 角落 ─────────────────────────────────────────── */
   #brand {
     position: fixed; right: 2.4rem; top: 1.7rem; z-index: 5; pointer-events: none;
@@ -305,7 +374,7 @@
     display: flex; flex-direction: column; align-items: flex-start; gap: .5rem;
   }
   #ctl-row { display: flex; gap: .5rem; }
-  #opt-btn, #search-btn {
+  #opt-btn {
     display: flex; align-items: center; gap: .45rem;
     padding: .4rem .9rem;
     background: rgba(8, 14, 26, .7); color: var(--text-dim);
@@ -314,8 +383,8 @@
     font: inherit; font-size: .62rem; letter-spacing: .12em; cursor: pointer;
     transition: color .2s, border-color .2s;
   }
-  #opt-btn:hover, #search-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
-  #opt-btn.on, #search-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
+  #opt-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
+  #opt-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
 
   /* 三段式模式切换：连体分段胶囊，内部分隔线，.cur 金色高亮 */
   #mode-switch {
@@ -363,9 +432,18 @@
   #opts label { display: flex; align-items: center; gap: .45rem; cursor: pointer; }
   #opts label:hover { color: var(--text); }
   #opts input { accent-color: var(--accent); width: .78rem; height: .78rem; cursor: pointer; }
+  #opts button {
+    margin-top: .3rem; padding: .34rem 0 0;
+    border: 0; border-top: 1px solid rgba(242, 200, 75, .16);
+    background: none; color: var(--text-dim);
+    font: inherit; font-size: .62rem; letter-spacing: .12em;
+    text-align: left; cursor: pointer; transition: color .2s;
+  }
+  #opts button:hover { color: var(--accent); }
 
   body.no-reticle #reticle,
   body.no-targets #targets, body.no-targets #hud .tgt-arc,
+  body.no-navball #attitude,
   body.no-footer #footer { display: none; }
   body.auto #search-wrap, body.auto #footer,
   body.wander #search-wrap, body.wander #footer { opacity: 0; pointer-events: none; }
@@ -440,6 +518,7 @@
     #panel-right { right: 3vw; min-height: 11rem; padding-bottom: 6rem; }
     #reticle { width: 50px; height: 50px; }
     #footer { display: none; }
+    #attitude { width: 6.5rem; height: 6.5rem; bottom: .9rem; }
     .target { width: 10rem; }
     /* 按钮区允许换行，给后续新增按钮留余量 */
     #ctl-row { flex-wrap: wrap; }
@@ -452,6 +531,7 @@
     body.fake-land #panel-right { right: 3vh; min-height: 11rem; padding-bottom: 6rem; }
     body.fake-land #reticle { width: 50px; height: 50px; }
     body.fake-land #footer { display: none; }
+    body.fake-land #attitude { width: 6.5rem; height: 6.5rem; bottom: .9rem; }
     body.fake-land .target { width: 10rem; }
     body.fake-land #ctl-row { flex-wrap: wrap; }
   }
@@ -569,6 +649,7 @@
   </div>
 </div>
 <div id="speed-readout">0.0 <em>ly/s</em></div>
+<canvas id="attitude" aria-hidden="true"></canvas>
 
 <div id="panel-left" class="hud-panel on">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -617,18 +698,6 @@
       <button id="mode-wander" type="button">漫游</button>
     </div>
     <button id="opt-btn" type="button">显示</button>
-    <div id="search-wrap">
-      <button id="search-btn" type="button" aria-label="搜索">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
-             stroke="currentColor" stroke-width="1.5">
-          <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
-      </button>
-      <div id="search-box">
-        <input id="search" type="search" autocomplete="off" spellcheck="false"
-               placeholder="搜索曲名 / UP 主 / TYC 编号">
-        <div id="results"></div>
-      </div>
-    </div>
     <button id="fs-btn" type="button" aria-label="全屏" hidden>
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
            stroke="currentColor" stroke-width="1.5">
@@ -636,13 +705,25 @@
         <path class="fs-out" d="M6 2.5V6H2.5M10 2.5V6h3.5M13.5 10H10v3.5M2.5 10H6v3.5"/>
       </svg>
     </button>
+    <div id="search-wrap">
+      <button id="search-btn" type="button" aria-label="搜索">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
+             stroke="currentColor" stroke-width="1.5">
+          <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      </button>
+      <input id="search" type="search" autocomplete="off" spellcheck="false"
+             placeholder="搜索曲名 / UP 主 / TYC 编号">
+      <div id="results"></div>
+    </div>
   </div>
   <div id="opts">
     <label><input type="checkbox" id="o-reticle" checked>中央指示器</label>
     <label><input type="checkbox" id="o-targets" checked>攻击指示器</label>
+    <label><input type="checkbox" id="o-navball" checked>姿态指示器</label>
     <label><input type="checkbox" id="o-footer" checked>版权信息</label>
     <label><input type="checkbox" id="o-spin" checked>自动视角转动</label>
     <label><input type="checkbox" id="o-safe">防晕模式（关闭拖尾）</label>
+    <button id="help-open" type="button">操作指南</button>
   </div>
 </div>
 <audio id="bgm" preload="none"></audio>
@@ -656,6 +737,28 @@
      target="_blank" rel="noopener">开源仓库</a>
   <span class="sep">/</span><a href="https://www.cloudflare.com/"
      target="_blank" rel="noopener">Powered by Cloudflare</a>
+</div>
+
+<div id="help-modal" hidden>
+  <div id="help-panel" role="dialog" aria-label="操作指南">
+    <button id="help-close" type="button" aria-label="关闭">✕</button>
+    <h2>操作指南</h2>
+    <div class="help-grp">鼠标 · 键盘</div>
+    <div class="help-row"><span>右键按住</span><b>指向线转向 · 离中心越远转得越快</b></div>
+    <div class="help-row"><span>A / D</span><b>滚转</b></div>
+    <div class="help-row"><span>W / S</span><b>俯仰</b></div>
+    <div class="help-row"><span>滚轮</span><b>切目标速度档 · 空心三角为设定值</b></div>
+    <div class="help-row"><span>鼠标中键</span><b>速度归零 · 长按转向银心</b></div>
+    <div class="help-row"><span>左键</span><b>选中恒星</b></div>
+    <div class="help-row"><span>「/」</span><b>搜索</b></div>
+    <div class="help-grp">触屏</div>
+    <div class="help-row"><span>左摇杆</span><b>调速</b></div>
+    <div class="help-row"><span>右摇杆</span><b>转向</b></div>
+    <div class="help-row"><span>双指捏合</span><b>缩放</b></div>
+    <div class="help-row"><span>轻点</span><b>选中恒星</b></div>
+    <div class="help-grp">模式</div>
+    <div class="help-row"><span>左上角切换</span><b>手动 · 巡游 · 漫游</b></div>
+  </div>
 </div>
 
 <div id="loading">
