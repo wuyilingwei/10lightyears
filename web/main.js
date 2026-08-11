@@ -497,7 +497,7 @@ function hover(x, y) {
 const panelLeft = document.getElementById("panel-left");
 const panelRight = document.getElementById("panel-right");
 const elTitle = document.getElementById("title");
-const F = Object.fromEntries(["author", "date", "view", "tyc", "sp", "mag", "dist", "cam"]
+const F = Object.fromEntries(["author", "date", "view", "tyc", "sp", "mag"]
   .map((k) => [k, document.getElementById(`f-${k}`)]));
 const elLinks = document.getElementById("links");
 const elLinkCount = document.getElementById("link-count");
@@ -518,6 +518,7 @@ function select(i) {
   if (i < 0) {
     panelLeft.classList.remove("on");
     panelRight.classList.remove("on");
+    clearLinks();
     linkLayer.classList.remove("sel");
     flare.needsUpdate = true; edgeGeom.getAttribute("alpha").needsUpdate = true;
     return;
@@ -547,11 +548,40 @@ function select(i) {
   F.tyc.textContent = t.s;
   F.sp.textContent = t.y || "—";
   F.mag.textContent = t.m.toFixed(2);
-  F.dist.textContent = `${fmt.format(Math.round(t.l))} ly`;
   fillLinks(i);
 
   cam.goalTarget.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
   cam.goalRadius = Math.max(cam.minRadius, Math.min(cam.goalRadius, 26));
+}
+
+const elTargets = document.getElementById("targets");
+const TARGET_MAX = 8;        // 每侧四个槽位
+const TARGET_SPREAD = 20;    // 槽位在弧上张开的角度
+
+const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
+  const el = document.createElement("div");
+  el.className = `target ${k < TARGET_MAX / 2 ? "left" : "right"}`;
+  el.innerHTML = '<span class="t"></span><span class="w"></span>';
+  el.addEventListener("click", () => {
+    if (el.dataset.i) select(Number(el.dataset.i));
+  });
+  elTargets.appendChild(el);
+  return el;
+});
+
+// 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
+function layoutTargets() {
+  const cx = innerWidth / 2, cy = innerHeight / 2;
+  const R = innerWidth * 0.46;
+  const half = TARGET_MAX / 2;
+  targetSlots.forEach((el, k) => {
+    const j = k % half;
+    const off = -TARGET_SPREAD / 2 + (TARGET_SPREAD * j) / (half - 1);
+    const deg = (k < half ? 180 : 0) + off;
+    const a = (deg * Math.PI) / 180;
+    el.style.left = `${(cx + R * Math.cos(a)).toFixed(1)}px`;
+    el.style.top = `${(cy + R * Math.sin(a)).toFixed(1)}px`;
+  });
 }
 
 function fillLinks(i) {
@@ -560,19 +590,20 @@ function fillLinks(i) {
       other: edgeIdx[e * 2] === i ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2],
       w: edgeW[e],
     }))
-    .sort((a, b) => b.w - a.w);
-  elLinkCount.textContent = rows.length;
-  elLinkList.innerHTML = rows.map((r) =>
-    `<div class="link" data-i="${r.other}">`
-    + `<span class="t">${escapeHtml(tracks[r.other].t)}</span>`
-    + `<span class="w">${r.w.toFixed(2)}</span></div>`).join("");
-  elLinks.open = false;
+    .sort((a, b) => b.w - a.w)
+    .slice(0, TARGET_MAX);
+  targetSlots.forEach((el, k) => {
+    const r = rows[k];
+    if (!r) { el.style.display = "none"; delete el.dataset.i; return; }
+    el.style.display = "flex";
+    el.dataset.i = r.other;
+    el.querySelector(".t").textContent = tracks[r.other].t;
+    el.querySelector(".w").textContent = r.w.toFixed(2);
+  });
+  elTargets.classList.add("on");
 }
 
-elLinkList.addEventListener("click", (e) => {
-  const row = e.target.closest(".link");
-  if (row) select(Number(row.dataset.i));
-});
+function clearLinks() { elTargets.classList.remove("on"); }
 
 function pick(x, y, focus) {
   const i = nearest(x, y, 16);
@@ -695,6 +726,8 @@ const FIELD_R = 26;   // 随机目标点的活动半径，场景单位
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const easeInOut = (u) => u * u * (3 - 2 * u);
+// 两端更平缓的五次缓动，转向不会一上来就窜出去
+const easeSoft = (u) => u * u * u * (u * (u * 6 - 15) + 10);
 
 function snapshotCam() {
   return {
@@ -707,13 +740,23 @@ function snapshotCam() {
    相机位置由 target + 球面偏移决定，所以要反解出让 P 保持不变的那组
    (theta, phi, radius)，否则"转向"会连人带机一起漂过去。 */
 const aimV = new THREE.Vector3();
+
+// atan2 的结果落在 (-pi, pi]，直接插值会在跨越边界时绕远路转一大圈。
+// 解缠到离当前角度最近的等价值，转向才走短弧。
+function unwrap(target, ref) {
+  let d = (target - ref) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return ref + d;
+}
+
 function aimAt(point) {
   aimV.copy(camera.position).sub(point);
   const r = Math.max(aimV.length(), 1);
   return {
     target: point.clone(),
     radius: r,
-    theta: Math.atan2(aimV.x, aimV.z),
+    theta: unwrap(Math.atan2(aimV.x, aimV.z), cam.goalTheta),
     phi: Math.acos(THREE.MathUtils.clamp(aimV.y / r, -1, 1)),
   };
 }
@@ -738,9 +781,9 @@ function flyTo(point, finalRadius, flySec, holdSec) {
   aim.theta += rnd(-0.06, 0.06);
   aim.phi = THREE.MathUtils.clamp(aim.phi + rnd(-0.04, 0.04), 0.3, Math.PI - 0.3);
   const fly = { ...aim, target: aim.target.clone(), radius: finalRadius };
-  const hold = { ...fly, target: fly.target.clone(), theta: fly.theta + rnd(0.2, 0.5) };
+  const hold = { ...fly, target: fly.target.clone(), theta: fly.theta + rnd(0.15, 0.35) };
   return [
-    { to: aim, dur: rnd(0.55, 0.85), ease: easeInOut },   // 瞄准，短促
+    { to: aim, dur: rnd(1.6, 2.3), ease: easeSoft },      // 瞄准，缓入缓出
     { to: fly, dur: flySec, ease: easeInOut },            // 加速冲过去再减速
     { to: hold, dur: holdSec, ease: (u) => u },           // 停留时缓慢环绕
   ];
@@ -753,12 +796,12 @@ function nextAction() {
     const e = neighbours[selected][(Math.random() * neighbours[selected].length) | 0];
     const other = edgeIdx[e * 2] === selected ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2];
     select(other);
-    startSegs(flyTo(starVec(other), rnd(12, 26), rnd(1.4, 2.0), 10));
+    startSegs(flyTo(starVec(other), rnd(12, 26), rnd(2.2, 3.0), 10));
     auto.lastWasSelect = true;
   } else if (Math.random() < 0.55) {
     const i = (Math.random() * N) | 0;
     select(i);
-    startSegs(flyTo(starVec(i), rnd(12, 26), rnd(1.6, 2.4), 10));
+    startSegs(flyTo(starVec(i), rnd(12, 26), rnd(2.4, 3.4), 10));
     auto.lastWasSelect = true;
   } else {
     const wide = Math.random() < 0.18;
@@ -770,7 +813,7 @@ function nextAction() {
       : new THREE.Vector3(rnd(-FIELD_R, FIELD_R), rnd(-FIELD_R * 0.4, FIELD_R * 0.4),
                           rnd(-FIELD_R, FIELD_R));
     const r = wide ? rnd(150, 260) : rnd(20, 90);
-    startSegs(flyTo(point, r, rnd(2.5, 4.0), rnd(2.5, 6.0)));
+    startSegs(flyTo(point, r, rnd(3.5, 5.0), rnd(2.5, 6.0)));
     auto.lastWasSelect = false;
   }
 }
@@ -909,11 +952,18 @@ const arcBgm = document.getElementById("arc-bgm");
 const arcSpeedBg = document.getElementById("arc-speed-bg");
 const speedTicks = document.getElementById("speed-ticks");
 const speedMark = document.getElementById("speed-mark");
+const speedZero = document.getElementById("speed-zero");
+const labels = document.getElementById("hud-labels");
 const elBgmName = document.getElementById("bgm-name");
 const elHudSpeed = document.getElementById("hud-speed");
 const elHudMode = document.getElementById("hud-mode");
 
-const A0 = -152, A1 = -28;                    // 弧的起止角，度；-90 是正上方
+// 弧心在屏幕中心略上方，弧长 90 度、以正下方为中点：右半段前进、左半段倒车
+const A_SPAN = 90, A_MID = 90;
+const A0 = A_MID + A_SPAN / 2;   // 左端（倒车满）
+const A1 = A_MID - A_SPAN / 2;   // 右端（前进满）
+const SPEED_FULL = 900;          // 量程上限 ly/s
+
 const polar = (cx, cy, r, deg) => {
   const a = (deg * Math.PI) / 180;
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
@@ -929,13 +979,11 @@ function arcPath(cx, cy, r, d0, d1) {
 
 let hudGeom = null;
 function layoutHud() {
-  const w = hudSvg.clientWidth, h = hudSvg.clientHeight;
+  const w = innerWidth, h = innerHeight;
   hudSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  const cx = w / 2;
-  const rSpeed = Math.min(w * 0.22, 260);
-  const rBgm = rSpeed + 22;
-  // 圆心压到视口外，并保证弧的两端留在下沿以上，不被切掉
-  const cy = h - 34 + rBgm * Math.sin((-A1 * Math.PI) / 180);
+  const cx = w / 2, cy = h * 0.44;          // 圆心在屏幕中心略上方
+  const rSpeed = Math.min(h * 0.38, w * 0.3);
+  const rBgm = rSpeed + 20;
   hudGeom = { cx, cy, rSpeed, rBgm };
 
   arcSpeedBg.setAttribute("d", arcPath(cx, cy, rSpeed, A0, A1));
@@ -943,37 +991,50 @@ function layoutHud() {
   arcBgm.setAttribute("d", arcPath(cx, cy, rBgm, A0, A1));
   arcBgm.style.strokeDasharray = `0 ${arcBgm.getTotalLength()}`;
 
+  const [zx0, zy0] = polar(cx, cy, rSpeed - 9, A_MID);
+  const [zx1, zy1] = polar(cx, cy, rSpeed + 7, A_MID);
+  speedZero.setAttribute("x1", zx0.toFixed(1)); speedZero.setAttribute("y1", zy0.toFixed(1));
+  speedZero.setAttribute("x2", zx1.toFixed(1)); speedZero.setAttribute("y2", zy1.toFixed(1));
+
   speedTicks.innerHTML = Array.from({ length: 9 }, (_, k) => {
     const d = A0 + ((A1 - A0) * k) / 8;
-    const [ax, ay] = polar(cx, cy, rSpeed - 7, d);
-    const [bx, by] = polar(cx, cy, rSpeed - (k % 4 === 0 ? 16 : 11), d);
+    const [ax, ay] = polar(cx, cy, rSpeed - 6, d);
+    const [bx, by] = polar(cx, cy, rSpeed - (k % 4 === 0 ? 14 : 10), d);
     return `<line class="tick" x1="${ax.toFixed(1)}" y1="${ay.toFixed(1)}"`
          + ` x2="${bx.toFixed(1)}" y2="${by.toFixed(1)}"/>`;
   }).join("");
+
+  labels.style.top = `${(cy + rSpeed + 26).toFixed(0)}px`;
 }
 
 let shownSpeed = 0;
-function updateHud(lySpeed) {
+function updateHud(signedSpeed) {
   if (!hudGeom) return;
-  const { cx, cy, rSpeed, rBgm } = hudGeom;
+  const { cx, cy, rSpeed } = hudGeom;
 
-  // 速度游标：开方压缩量程，低速段才有分辨率
-  shownSpeed += (lySpeed - shownSpeed) * 0.15;
-  const frac = THREE.MathUtils.clamp(Math.sqrt(shownSpeed / 900), 0, 1);
-  const d = A0 + (A1 - A0) * frac;
-  // 游标放在速度弧内侧朝外指，放外侧会顶到进度弧、也容易被下沿切掉
-  const [tx, ty] = polar(cx, cy, rSpeed - 8, d);
-  const [lx, ly] = polar(cx, cy, rSpeed - 20, d - 2.4);
-  const [rx, ry] = polar(cx, cy, rSpeed - 20, d + 2.4);
+  shownSpeed += (signedSpeed - shownSpeed) * 0.15;
+  // 开方压缩量程，低速段才有分辨率；符号决定落在中点的哪一侧
+  const mag = THREE.MathUtils.clamp(Math.sqrt(Math.abs(shownSpeed) / SPEED_FULL), 0, 1);
+  const f = Math.sign(shownSpeed) * mag;
+  const d = A_MID - (A_SPAN / 2) * f;
+
+  // 游标在弧内侧朝外指，放外侧会顶到进度弧
+  const [tx, ty] = polar(cx, cy, rSpeed - 7, d);
+  const [lx, ly] = polar(cx, cy, rSpeed - 18, d - 2.6);
+  const [rx, ry] = polar(cx, cy, rSpeed - 18, d + 2.6);
   speedMark.setAttribute("points",
     `${tx.toFixed(1)},${ty.toFixed(1)} ${lx.toFixed(1)},${ly.toFixed(1)} `
     + `${rx.toFixed(1)},${ry.toFixed(1)}`);
-  elHudSpeed.textContent = shownSpeed.toFixed(shownSpeed < 100 ? 1 : 0);
+
+  const rev = shownSpeed < -1;
+  hudSvg.classList.toggle("rev", rev);
+  document.body.classList.toggle("rev", rev);
+  const abs = Math.abs(shownSpeed);
+  elHudSpeed.textContent = abs.toFixed(abs < 100 ? 1 : 0);
 
   const total = arcBgm.getTotalLength();
-  const p = bgm.duration ? THREE.MathUtils.clamp(bgm.currentTime / bgm.duration, 0, 1) : 0;
-  arcBgm.style.strokeDasharray = `${(total * p).toFixed(1)} ${total.toFixed(1)}`;
-  void rBgm;
+  const pr = bgm.duration ? THREE.MathUtils.clamp(bgm.currentTime / bgm.duration, 0, 1) : 0;
+  arcBgm.style.strokeDasharray = `${(total * pr).toFixed(1)} ${total.toFixed(1)}`;
 }
 
 const BGM_TITLE = { "star-wish.m4a": "星愿 StarWish", "star-lalala.m4a": "StarLaLaLa" };
@@ -998,6 +1059,7 @@ function resize() {
   rtPrev.setSize(w * dpr, h * dpr);
   rtNext.setSize(w * dpr, h * dpr);
   layoutHud();
+  layoutTargets();
 }
 addEventListener("resize", resize);
 resize();
@@ -1006,6 +1068,8 @@ let prev = performance.now();
 let decay = 0;
 const lastCamPos = new THREE.Vector3();
 const camVel = new THREE.Vector3();
+const worldVel = new THREE.Vector3();
+let lastRadius = cam.radius;
 
 function frame(now) {
   // 下界不能省：dt 为负会让下面的 pow 指数翻转，平滑系数变成负数，decay 发散
@@ -1023,14 +1087,16 @@ function frame(now) {
   camVel.subVectors(camera.position, lastCamPos)
         .divideScalar(Math.max(dt, 1e-3) * Math.max(cam.radius, 1));
   const speed = camVel.length();
-  const lySpeed = camVel.length() * Math.max(cam.radius, 1) / SCENE_SCALE;
+  // 倒车判据用轨道半径的变化率：拉远即倒车。
+  // 用视向分量会过于敏感 —— 选中飞入时相机绕到目标另一侧也会瞬间判成倒车。
+  worldVel.subVectors(camera.position, lastCamPos).divideScalar(Math.max(dt, 1e-3));
+  const totalSpeed = worldVel.length() / SCENE_SCALE;
+  const radRate = (cam.radius - lastRadius) / Math.max(dt, 1e-3) / SCENE_SCALE;
+  lastRadius = cam.radius;
+  const signedSpeed = radRate > totalSpeed * 0.25 ? -totalSpeed : totalSpeed;
   lastCamPos.copy(camera.position);
   starMat.uniforms.uCamVel.value.copy(camVel);
-  updateHud(lySpeed);
-  if (selected >= 0) {
-    F.cam.textContent =
-      `${fmt.format(Math.round(camera.position.distanceTo(starVec(selected)) / SCENE_SCALE))} ly`;
-  }
+  updateHud(signedSpeed);
 
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
