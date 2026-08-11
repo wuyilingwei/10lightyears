@@ -97,6 +97,8 @@ const ENGINE = {
 const MANUAL_BOOST = 1.5;
 const vel = { r: 0, pan: 0 };
 const panDelta = new THREE.Vector3();
+const autoUp = new THREE.Vector3();
+const autoFwd = new THREE.Vector3();
 
 // 带加减速的抵达：期望速度取 sqrt(2*a*误差)，于是到点时速度正好归零
 function approach(cur, v, goal, accel, maxV, dt) {
@@ -163,9 +165,25 @@ function applyCamera(dt) {
     cam.target.y + cam.radius * Math.cos(cam.phi),
     cam.target.z + cam.radius * sp * Math.cos(cam.theta),
   );
-  // 自动模式恒用世界 up；手动模式用机身持久 up（含滚转历史），
-  // lookAt 只是借用它稳定地把 up 正交化进相机四元数，朝向仍由 position 决定
-  camera.up.copy(auto.on || auto.assist ? FLIP_UP : bodyUp);
+  // 自动模式以世界 up 为基准，再绕视线滚转 auto.roll（漫游的花样飞行用；
+  // 巡游恒为 0）；手动模式用机身持久 up（含滚转历史）。lookAt 只是借用它
+  // 稳定地把 up 正交化进相机四元数，朝向仍由 position 决定
+  if (auto.on || auto.assist) {
+    autoUp.copy(FLIP_UP);
+    if (auto.roll) {
+      autoFwd.subVectors(cam.target, camera.position);
+      const l = autoFwd.length();
+      if (l > 1e-6) {
+        autoFwd.divideScalar(l);
+        autoUp.addScaledVector(autoFwd, -autoUp.dot(autoFwd));
+        if (autoUp.lengthSq() > 1e-8) autoUp.normalize().applyAxisAngle(autoFwd, auto.roll);
+        else autoUp.copy(FLIP_UP);
+      }
+    }
+    camera.up.copy(autoUp);
+  } else {
+    camera.up.copy(bodyUp);
+  }
   camera.lookAt(cam.target);
 }
 
@@ -245,26 +263,54 @@ function endPointer(e, tap) {
 canvas.addEventListener("pointerup", (e) => endPointer(e, true));
 canvas.addEventListener("pointercancel", (e) => endPointer(e, false));
 
-/* 鼠标中键与触屏中键按钮：按下立即清速度；按住不放超过阈值则持续转向
-   银心，松开即停。两个输入源各自一份独立状态（held/timer），不共享同一个
-   计时器/标记——否则一个源的按下会顶掉另一个源还没触发的定时器引用，
-   导致短按被另一路的长按误判打断，或反过来把短按误判成长按。steerCenter
-   是两路的或：任一路还处在"按住超过阈值"就继续转。不进 pointers 表，
-   与左右键的选中/指向线互不相扰。 */
-let steerCenter = false;
-const midMouse = { held: false, timer: null, fired: false };
-const midTouch = { held: false, timer: null, fired: false };
+/* 鼠标中键与触屏中键按钮：单按清速度；双击激活 steerCenterPersist（持续
+   转向银心直至对齐）；长按 500ms 回到起始位置（距银心 160su、朝向银心）。
+   两路独立状态，不共享计时器引用，不进 pointers 表。 */
+let steerCenterPersist = false;   // 双击中键激活，对齐银心后自清
+
+const MID_DBL_MS = 380;           // 双击判定窗口
+const MID_LONG_MS = 500;          // 长按触发阈值
+
+const midMouse = { held: false, timer: null, fired: false, clicks: 0, dblTimer: null };
+const midTouch = { held: false, timer: null, fired: false, clicks: 0, dblTimer: null };
+
+function resetHome() {
+  // 必须走 setAuto 而不是直接写 auto.on：模式按钮高亮、body 的 auto/wander
+  // 类（它管着搜索框与页脚的可见性）、背景音乐都只在 setAuto 里同步，
+  // 绕过去会让这些状态永久卡在自动态，之后再点「手动」也因早退修不回来
+  setAuto(false);
+  auto.segs = null; auto.engine = '';
+  auto.roll = 0; auto.rollRate = 0;   // 归位要摆正，不能带着漫游的滚转回来
+  cam.target.set(0, 0, 0); cam.goalTarget.set(0, 0, 0);
+  cam.theta = 0.7; cam.phi = 1.22; cam.radius = 160;
+  cam.goalTheta = 0.7; cam.goalPhi = 1.22; cam.goalRadius = 160;
+  vel.r = 0;
+  syncBodyFromSpherical();
+  throttle.gear = 0; throttle.v = 0;
+  steerCenterPersist = false;
+}
+
 function midPress(st) {
+  clearTimeout(st.timer); st.timer = null;
   st.held = true; st.fired = false;
   throttle.gear = 0; throttle.v = 0;
+
+  clearTimeout(st.dblTimer);
+  st.clicks = (st.clicks || 0) + 1;
+  if (st.clicks >= 2) {
+    st.clicks = 0;
+    steerCenterPersist = true;
+    return;
+  }
+  st.dblTimer = setTimeout(() => { st.clicks = 0; }, MID_DBL_MS);
+
   st.timer = setTimeout(() => {
-    if (st.held) { st.fired = true; steerCenter = midMouse.fired || midTouch.fired; }
-  }, 350);
+    if (st.held) { st.fired = true; resetHome(); }
+  }, MID_LONG_MS);
 }
 function midRelease(st) {
   st.held = false; st.fired = false;
-  clearTimeout(st.timer);
-  steerCenter = midMouse.fired || midTouch.fired;
+  clearTimeout(st.timer); st.timer = null;
 }
 canvas.addEventListener("pointerdown", (e) => {
   if (e.pointerType !== "mouse" || e.button !== 1) return;
@@ -279,13 +325,15 @@ addEventListener("blur", () => { midRelease(midMouse); midRelease(midTouch); });
 
 // 银心方向在相机系里的左右/上下分量，接近时收窄输入，转到位就停，不来回摆
 function steerCenterStep() {
-  if (!steerCenter) return;
-  attLook.copy(camera.position).negate();   // 相机 -> 银心（原点）
+  if (!steerCenterPersist) return;
+  attLook.copy(camera.position).negate();
   const dist = attLook.length();
-  if (dist < 1e-3) return;
+  if (dist < 1e-3) { steerCenterPersist = false; return; }
   attLook.divideScalar(dist);
   const right = attLook.dot(bodyRight), up = attLook.dot(bodyUp);
-  const strength = Math.min(Math.hypot(right, up) / 0.15, 1);
+  const err = Math.hypot(right, up);
+  if (err < 0.01) { steerCenterPersist = false; return; }
+  const strength = Math.min(err / 0.15, 1);
   att.inYaw -= right * strength;
   att.inPitch += up * strength;
 }
@@ -428,8 +476,23 @@ function attitudeStep(dt) {
     wasAutoOrAssist = true;
     return;
   }
-  // 自动/辅助刚交回手动：机身基从这一刻的朝向重新起步，滚转归零
-  if (wasAutoOrAssist) { syncBodyFromSpherical(); wasAutoOrAssist = false; }
+  // 自动/辅助刚交回手动：机身基从这一刻的朝向重新起步。自动段可能正带着
+  // 滚转（漫游的花样飞行），把这个角折进机身基再清零——两处的"中性 up"
+  // 都是世界 Y 对机头正交化的结果，折算是精确的，画面不会在切换那帧摆正
+  if (wasAutoOrAssist) {
+    syncBodyFromSpherical();
+    if (auto.roll) {
+      bodyRight.applyAxisAngle(bodyFwd, auto.roll);
+      bodyUp.applyAxisAngle(bodyFwd, auto.roll);
+      auto.roll = 0;
+    }
+    // 滚转角速度也一并交接：桶滚中途接管时若把它一帧清零，地平线会硬停，
+    // 而引擎规格是刹住滚转需要半秒
+    att.roll = THREE.MathUtils.clamp(auto.rollRate,
+      -ENGINE.rcs.angMax * MANUAL_BOOST, ENGINE.rcs.angMax * MANUAL_BOOST);
+    auto.rollRate = 0;
+    wasAutoOrAssist = false;
+  }
 
   const iy = THREE.MathUtils.clamp(att.inYaw, -1, 1);
   const ip = THREE.MathUtils.clamp(att.inPitch, -1, 1);
@@ -1481,9 +1544,11 @@ function applyTrailLevel() {
 }
 
 /* ── 自动巡游 / 漫游 ────────────────────────────────
-   巡游：聚焦某颗星与随机运镜轮换，偶尔退到全景；
-   连续聚焦时有 25% 概率跳到相近曲目，让巡游沿着曲风网络走一段。
-   漫游：随机路点间穿行不驻留，偶尔翻转视线或就近展示一颗星。 */
+   两种模式共用同一套引擎规格，只是编排方式不同。
+   巡游：一次一个目标，星体与坐标点各半，走"瞄准→点火→反推→入轨"的
+   分段时序；每个目标占 10-15s 的时间预算，行程吃不满的部分留给驻留。
+   漫游：不落地的连续飞行，逐帧积分一条受引擎限制的轨迹，路点只是转向
+   吸引子；沿途扫描顺路的星体——只锁定展示、不改航线。 */
 const modeBtns = {
   manual: document.getElementById("mode-manual"),
   cruise: document.getElementById("mode-cruise"),
@@ -1504,10 +1569,13 @@ bgm.addEventListener("ended", () => loadBgm(bgmIndex + 1, auto.on));
 
 const auto = {
   on: false, mode: "", t0: 0, lastWasSelect: false,
-  segs: null, idx: 0, from: null, engine: "",
-  assist: false, canShow: false,
+  segs: null, idx: 0, from: null, engine: "", rcsOn: false,
+  assist: false,
+  gear: 0,                       // su/s，自动驾驶当前设定的目标速度（正=前进）
+  roll: 0, rollRate: 0,          // rad / rad·s⁻¹，自动段的滚转
+  scan: -1, scanEnd: 0, scanNext: 0,   // 漫游扫描：目标、到期时刻、下次可扫时刻
 };
-const FIELD_R = 26;   // 随机目标点的活动半径，场景单位
+const FIELD_R = 26;   // 巡游随机坐标点的活动半径，场景单位
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const easeInOut = (u) => u * u * (3 - 2 * u);
@@ -1541,12 +1609,15 @@ function unwrap(target, ref) {
 
 function aimFrom(pos, point, thetaRef) {
   aimV.copy(pos).sub(point);
-  const r = Math.max(aimV.length(), 1);
+  // phi 必须用真实长度归一：半径下限只是给返回值兜底，拿它当分母会在近距离
+  // （辅助驾驶停稳在 0.68 su、或捏合压到 minRadius）把俯仰压向 π/2，
+  // 瞄准段声称的「机位钉死」就不成立了
+  const len = Math.max(aimV.length(), 1e-6);
   return {
     target: point.clone(),
-    radius: r,
+    radius: Math.max(len, 1),
     theta: unwrap(Math.atan2(aimV.x, aimV.z), thetaRef),
-    phi: Math.acos(THREE.MathUtils.clamp(aimV.y / r, -1, 1)),
+    phi: Math.acos(THREE.MathUtils.clamp(aimV.y / len, -1, 1)),
   };
 }
 
@@ -1586,9 +1657,18 @@ function startSegs(segs) {
   auto.t0 = performance.now();
 }
 
-// 角向段时长：1.9 盖过 easeSoft 峰值斜率 1.875，常数项留给起停斜坡
-function angTime(a, b) {
-  const ang = Math.max(Math.abs(b.theta - a.theta), Math.abs(b.phi - a.phi));
+// 瞄准段时长：机位钉死时真正扫过的是两个注视方向的大圆夹角。用
+// max(|Δθ|,|Δφ|) 会低估（两轴同时变化时最坏差 √2 倍），段时长跟着偏短，
+// 角速度就破了 RCS 上限。1.9 盖过 easeSoft 峰值斜率 1.875，常数项留给起停斜坡
+const angD0 = new THREE.Vector3();
+const angD1 = new THREE.Vector3();
+function pivotTime(pivot, from, to) {
+  angD0.copy(from).sub(pivot);
+  angD1.copy(to).sub(pivot);
+  const l0 = angD0.length(), l1 = angD1.length();
+  const ang = l0 > 1e-6 && l1 > 1e-6
+    ? Math.acos(THREE.MathUtils.clamp(angD0.dot(angD1) / (l0 * l1), -1, 1))
+    : 0;
   return (ang / ENGINE.rcs.angMax) * 1.9 + 0.4;
 }
 
@@ -1599,14 +1679,15 @@ function burnPlan(rFrom, rTo) {
   const m = ENGINE.main;
   const D = Math.abs(rTo - rFrom);
   if (D < 1e-6) {
-    return { dAcc: 0, dCruise: 0, tAcc: 0.3, tCruise: 0, tRetro: 0.3 };
+    return { dAcc: 0, dCruise: 0, gear: 0, tAcc: 0.3, tCruise: 0, tRetro: 0.3 };
   }
   const cap = rTo < rFrom ? m.vFwd : m.vRev;
   const v = Math.min(cap, Math.sqrt((2 * D * m.accel * m.brake) / (m.accel + m.brake)));
   const dAcc = (v * v) / (2 * m.accel);
   const dRetro = (v * v) / (2 * m.brake);
   const dCruise = Math.max(0, D - dAcc - dRetro);
-  return { dAcc, dCruise, tAcc: v / m.accel,
+  // gear：本次点火设定的目标速度，半径减小为前进（正），供仪表的空心游标读
+  return { dAcc, dCruise, gear: rTo < rFrom ? v : -v, tAcc: v / m.accel,
            tCruise: dCruise / Math.max(v, 1e-3), tRetro: v / m.brake };
 }
 
@@ -1619,45 +1700,75 @@ function burnSegs(fromState, arriveState, plan) {
   const fCru = D > 1e-6 ? (plan.dAcc + plan.dCruise) / D : 0.5;
   const mid = (f) => ({ ...arriveState, target: arriveState.target.clone(),
     theta: fromState.theta + dT * f, radius: fromState.radius + dR * f });
-  const segs = [{ to: mid(fAcc), dur: plan.tAcc, ease: easeIn, engine: "main" }];
+  const segs = [{ to: mid(fAcc), dur: plan.tAcc, ease: easeIn,
+                  engine: "main", gear: plan.gear }];
   if (plan.tCruise > 0.05) {
-    segs.push({ to: mid(fCru), dur: plan.tCruise, ease: (u) => u, engine: "main" });
+    segs.push({ to: mid(fCru), dur: plan.tCruise, ease: (u) => u,
+                engine: "main", gear: plan.gear });
   }
-  segs.push({ to: arriveState, dur: plan.tRetro, ease: easeOut, engine: "retro" });
+  // 反推段的设定速度是 0：空心游标先跳到点火档位，再落回零，实心指针跟着走
+  segs.push({ to: arriveState, dur: plan.tRetro, ease: easeOut,
+              engine: "retro", gear: 0 });
   return segs;
 }
 
-// 一次机动拆成四段，对应真实的推进时序：
-// 矢量喷口转向 -> 主引擎点火加速 -> 反推减速 -> 入轨环绕
+// 一次机动拆成三段行程，对应真实的推进时序：
+// 矢量喷口转向 -> 主引擎点火加速 -> 反推减速（驻留由 padHold 另接）
 // 瞄准段带 pivot：机位钉死，goal 逐帧由注视点反解，段末与 aim 精确衔接
-function flyTo(point, finalRadius, holdSec, arcTheta = 0) {
+function flyTo(point, finalRadius, arcTheta = 0) {
   const from = snapshotCam();
   const pivot = stateCamPos(from);
   levelPoint(pivot, point, 0.12);
   const aim = aimFrom(pivot, point, from.theta);
+  const plan = burnPlan(aim.radius, finalRadius);
 
-  // arcTheta 让推进段同时转向，走一条弧线而不是直着往后退
+  // arcTheta 让推进段同时转向，走一条弧线而不是直着往后退。但 theta 是按
+  // 行程占比铺开的，角速率恒为 arcTheta·v/D —— 行程短时会轻松破 RCS 上限
+  // （D=5su、v=7.5su/s、arc=0.7 就是 1.04 rad/s，两倍 angMax）。按本次点火
+  // 的实际时长把弧度上限反算出来
+  const burn = plan.tAcc + plan.tCruise + plan.tRetro;
+  const arcCap = ENGINE.rcs.angMax * burn * 0.5;   // 0.5 留给 easeIn 的峰值斜率
+  const arc = THREE.MathUtils.clamp(arcTheta, -arcCap, arcCap);
   const arrive = { ...aim, target: aim.target.clone(),
-                   theta: aim.theta + arcTheta, radius: finalRadius };
-  // 入轨漂移量受停留时长与 RCS 角速度上限约束，停留短就少转一点
-  const orbit = { ...arrive, target: arrive.target.clone(),
-                  theta: arrive.theta
-                    + Math.min(rnd(0.15, 0.35), holdSec * ENGINE.rcs.angMax * 0.6) };
+                   theta: aim.theta + arc, radius: finalRadius };
 
-  const segs = [
-    { to: aim, dur: angTime(from, aim), ease: easeSoft, engine: "rcs", pivot },
-    ...burnSegs(aim, arrive, burnPlan(aim.radius, finalRadius)),
+  return [
+    { to: aim, dur: pivotTime(pivot, from.target, aim.target),
+      ease: easeSoft, engine: "rcs", pivot, gear: 0 },
+    ...burnSegs(aim, arrive, plan),
   ];
-  if (holdSec > 0) {
-    segs.push({ to: orbit, dur: holdSec, ease: (u) => u, engine: "orbit" });
-  }
+}
+
+/* 一次目标占满 budget 秒：行程算完后把剩下的时间给入轨驻留段。目标较远、
+   行程本身已经吃满预算时只留最短驻留——宽容超时，不砍航段。
+   入轨漂移量同时受驻留时长与 RCS 角速度上限约束，驻留短就少转一点。 */
+const CRUISE_CYCLE = [10, 15];   // s，一个目标的时间预算
+const CRUISE_HOLD_MIN = 1.5;     // s，最短驻留
+const PANO_HOLD_MIN = 4.5;       // s，全景回望的最短驻留
+const CRUISE_BANK = 0.45;        // rad，巡游转向时的坡度上限，比漫游收敛
+
+function padHold(segs, budget, driftA, driftB, minHold = CRUISE_HOLD_MIN) {
+  let travel = 0;
+  for (const s of segs) travel += s.dur;
+  const hold = Math.max(minHold, budget - travel);
+  const last = segs[segs.length - 1].to;
+  // 漂移上限同时看角速度与线速度：驻留段是绕注视点画弧，切向线速度是
+  // 半径×角速率。只钳角速率的话，全景那种 400 su 半径下 0.25 rad 的漂移
+  // 会跑出近 900 ly/s —— 而这一段的引擎灯是全灭的，仪表自相矛盾
+  const r = Math.max(last.radius, 1);
+  const cap = hold * Math.min(ENGINE.rcs.angMax * 0.6, ENGINE.rcs.panMax / r);
+  segs.push({
+    to: { ...last, target: last.target.clone(),
+          theta: last.theta + Math.min(rnd(driftA, driftB), cap) },
+    dur: hold, ease: (u) => u, engine: "orbit", gear: 0,
+  });
   return segs;
 }
 
 // 全景：一律机头朝前 —— 倒车上限 100 ly/s 拖不动大半径外推。
 // 沿背离银心方向外推出系，反推停住后原地掉头回望银心；
 // arcTheta 变体把出口方向绕 Y 侧偏，燃烧段再扫一条大弧
-function panorama(holdSec, arcTheta = 0) {
+function panorama(arcTheta = 0) {
   const from = snapshotCam();
   const pivot = stateCamPos(from);
   const out = pivot.clone();
@@ -1680,15 +1791,12 @@ function panorama(holdSec, arcTheta = 0) {
   const backPt = new THREE.Vector3(rnd(-8, 8), rnd(-5, 5), rnd(-8, 8));
   levelPoint(pivotB, backPt, 0.15);
   const back = aimFrom(pivotB, backPt, arrive.theta);
-  const orbit = { ...back, target: back.target.clone(),
-                  theta: back.theta
-                    + Math.min(rnd(0.1, 0.25), holdSec * ENGINE.rcs.angMax * 0.6) };
   return [
-    { to: aim, dur: angTime(from, aim), ease: easeSoft, engine: "rcs", pivot },
+    { to: aim, dur: pivotTime(pivot, from.target, aim.target),
+      ease: easeSoft, engine: "rcs", pivot, gear: 0 },
     ...burnSegs(aim, arrive, burnPlan(aim.radius, nearR)),
-    { to: back,  dur: angTime(arrive, back), ease: easeSoft, engine: "rcs",
-      pivot: pivotB },
-    { to: orbit, dur: holdSec,               ease: (u) => u, engine: "orbit" },
+    { to: back, dur: pivotTime(pivotB, arrive.target, back.target),
+      ease: easeSoft, engine: "rcs", pivot: pivotB, gear: 0 },
   ];
 }
 
@@ -1697,121 +1805,440 @@ const APPROACH_LY = 8.12;   // 自动逼近固定停在这个距离，不再随�
 // 手动点选后的辅助驾驶：同一套分段送达，无 orbit 段，任何主动操作打断
 function startAssist(i) {
   auto.assist = true;
-  startSegs(flyTo(starVec(i), APPROACH_LY * SCENE_SCALE, 0));
+  bankHas = false;   // 坡度参考的上一帧视线作废，别拿手动那帧去算
+  startSegs(flyTo(starVec(i), APPROACH_LY * SCENE_SCALE));
+}
+
+/* ── 自动滚转 ────────────────────────────────────────
+   滚转与偏航/俯仰同吃 RCS 的角加速度与角速度上限。角度收进 (-π, π]，
+   连续横滚才不会把 roll 累加成一个越来越大的数。 */
+function autoRoll(rate, dt) {
+  const rcs = ENGINE.rcs;
+  const want = THREE.MathUtils.clamp(rate, -rcs.angMax, rcs.angMax);
+  auto.rollRate += THREE.MathUtils.clamp(want - auto.rollRate,
+    -rcs.angAccel * dt, rcs.angAccel * dt);
+  if (!auto.rollRate) return;
+  auto.roll += auto.rollRate * dt;
+  if (auto.roll > Math.PI) auto.roll -= Math.PI * 2;
+  else if (auto.roll <= -Math.PI) auto.roll += Math.PI * 2;
+}
+
+// 滚转到指定坡度角：期望角速度按 sqrt(2·角加速度·剩余角) 收敛，够近就吸住
+function autoRollTo(bank, dt) {
+  const rcs = ENGINE.rcs;
+  // 误差要折到最短弧：横滚可能停在 ±π 附近，裸差值会让机身朝反方向多转
+  // 近 180° 才回到坡度上
+  let err = bank - auto.roll;
+  if (err > Math.PI) err -= Math.PI * 2;
+  else if (err < -Math.PI) err += Math.PI * 2;
+  if (!err && !auto.rollRate) return;
+  autoRoll(Math.sign(err)
+    * Math.min(rcs.angMax, Math.sqrt(2 * rcs.angAccel * Math.abs(err))), dt);
+  let rest = bank - auto.roll;
+  if (rest > Math.PI) rest -= Math.PI * 2;
+  else if (rest < -Math.PI) rest += Math.PI * 2;
+  if (Math.abs(rest) < 0.01 && Math.abs(auto.rollRate) < 0.06) {
+    auto.roll = bank; auto.rollRate = 0;
+  }
+}
+
+/* 转弯压坡度：从视线方向的逐帧变化里取绕机顶那一份（即偏航角速度），
+   反号即为坡度——绕机头正向滚转把机顶压向右舷，而绕机顶正向偏航是左转。
+   巡游与漫游共用，只是坡度上限不同。 */
+const bankPrev = new THREE.Vector3();
+const bankAxis = new THREE.Vector3();
+const bankUp = new THREE.Vector3();
+let bankHas = false;
+
+function bankFor(fwd, dt, maxBank, gain) {
+  if (!bankHas || dt <= 0) { bankPrev.copy(fwd); bankHas = true; return 0; }
+  bankAxis.crossVectors(bankPrev, fwd);
+  bankPrev.copy(fwd);
+  bankUp.copy(FLIP_UP).addScaledVector(fwd, -FLIP_UP.dot(fwd));
+  if (bankUp.lengthSq() < 1e-8) return 0;
+  const yaw = bankAxis.dot(bankUp.normalize()) / dt;   // 叉乘模长≈转过的角
+  return THREE.MathUtils.clamp(-yaw * gain, -maxBank, maxBank);
+}
+
+/* ── 漫游：连续轨迹 ───────────────────────────────────
+   不做分段编排，逐帧积分：路点只是转向吸引子，够近或已掠过就换下一个，
+   全程不停车。转向吃 RCS 角加速度/角速度上限，加减速吃主引擎 accel/brake
+   与前进上限，滚转走同一套 RCS —— 与手动飞行共用一份 ENGINE 规格。 */
+// 活动半径按星距分布定：到银心 p50=31su、p75=51su、p90=86su，再往外就是
+// 几乎无星的空域——跑出去只会得到一块黑屏，所以把漫游圈在 p80 附近
+const ROAM_FIELD = 42;          // su，路点活动半径
+const ROAM_LEG = [35, 80];      // su，单段路点距离
+// 转弯半径 = 航速 / 角速度上限，300 ly/s 时是 48 su，比场界还大——掉头一次
+// 就会甩到 100 su 外的空域去。压到 220 ly/s，转弯半径 35 su 才收得住
+const ROAM_SPEED = [90, 220];   // ly/s，巡航目标速度区间
+const ROAM_LEASH_SPEED = 110;   // ly/s，被缰绳拽回场界时压到的档位
+const ROAM_HOLD = [6, 12];      // s，同一个目标速度维持多久
+const ROAM_PITCH = 0.8;         // |期望方向.y| 上限，避开极区反解不稳
+const ROAM_PITCH_HARD = 0.97;   // |机头.y| 硬上限，只兜极区奇点
+const ROAM_PLAN = 3;            // 预排路点数，导航球虚线直接读这条队列
+const ROAM_BANK = 0.9;          // rad，转弯压坡度的最大滚转角
+// 横滚按时间起落，不挂在换段上：换段快慢受路点间距与航速影响，挂上去
+// 会时密时疏
+const ROAM_ROLL_ON = [2.5, 5];  // s，一次横滚持续多久
+const ROAM_ROLL_OFF = [10, 22]; // s，两次横滚之间隔多久
+/* 视角拉动：注视点跑轨迹，相机吊在它后面 boom 远处。boom 一变，相机就沿
+   航线前后拉伸——这就是自动模式版的推拉镜头。拉伸速率必须小于航速的
+   1/4，否则 frame() 里"半径涨得比总位移快就是倒车"的判据会把它误判成
+   倒车，仪表整块翻红。 */
+/* 吊臂上限还受转弯牵制：相机绕注视点摆，转弯时线速度要多出 boom×角速度
+   （42 su × 0.524 rad/s ≈ 250 ly/s），与航速加起来必须留在主引擎前进
+   上限之内，否则"按引擎限制运动"就成了空话。 */
+const ROAM_BOOM = [12, 42];     // su，相机吊臂长度区间
+const ROAM_BOOM_HOLD = [8, 16]; // s，一个吊臂长度维持多久
+const ROAM_BOOM_FAR = 34;       // su，扫描时至少伸到这么长（见下）
+const ROAM_BOOM_RATE = 0.18;    // 吊臂伸缩速率上限占航速的比例
+
+const roam = {
+  pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, -1),
+  omega: new THREE.Vector3(),     // rad/s，角速度矢量（方向即转轴）
+  v: 0, gear: 0, turn: 0, barrel: 0, plan: [],
+  speedAt: 0, rollAt: 0, boom: 24, boomTo: 24, boomAt: 0, boomV: 0,
+};
+const roamDir = new THREE.Vector3();
+const roamAxis = new THREE.Vector3();
+const roamUp = new THREE.Vector3();
+const roamWant = new THREE.Vector3();
+
+/* 俯仰钳制：y 分量压回 ±lim，水平分量按比例补回，长度仍为 1。
+   期望方向用 ROAM_PITCH，机头本身只用 ROAM_PITCH_HARD 兜住极区 —— 拿
+   ROAM_PITCH 去钳机头会让"仰角很大时切进漫游"一帧改写 goalPhi 达 0.6 rad，
+   而 applyCamera 对 goal 没有角速率限幅，机位会被甩出去。让机头顺着期望
+   方向自己转回带内，转速自然受 angMax 约束。 */
+function roamLevel(d, lim = ROAM_PITCH) {
+  if (d.lengthSq() < 1e-12) return d.set(0, 0, -1);
+  d.normalize();
+  if (Math.abs(d.y) <= lim) return d;
+  const h = Math.hypot(d.x, d.z) || 1e-6;
+  const s = Math.sqrt(1 - lim * lim) / h;
+  return d.set(d.x * s, Math.sign(d.y) * lim, d.z * s);
+}
+
+// 排一个新路点：沿队尾航向侧偏加起伏；越接近场界越往银心侧掰
+function roamPush() {
+  const n = roam.plan.length;
+  const last = n ? roam.plan[n - 1] : roam.pos;
+  if (n >= 2) roamDir.subVectors(last, roam.plan[n - 2]);
+  else if (n === 1) roamDir.subVectors(last, roam.pos);
+  else roamDir.copy(roam.fwd);
+  roamLevel(roamDir);
+
+  roamDir.applyAxisAngle(FLIP_UP, (Math.random() < 0.5 ? -1 : 1) * rnd(0.2, 0.7));
+  roamAxis.crossVectors(roamDir, FLIP_UP);
+  if (roamAxis.lengthSq() < 1e-8) roamAxis.copy(FLIP_RIGHT);
+  roamDir.applyAxisAngle(roamAxis.normalize(),
+    (Math.random() < 0.5 ? -1 : 1) * rnd(0.05, 0.3));
+
+  // 出界不靠硬折返（那会甩出一个近 180° 的急转），按越界程度掺进指心方向。
+  // 起掺点必须远早于场界：随机游走本身带外漂，掺得晚就一路漂到空域去
+  const out = THREE.MathUtils.clamp(
+    (last.length() - ROAM_FIELD * 0.4) / (ROAM_FIELD * 0.6), 0, 1);
+  if (out > 0) {
+    roamAxis.copy(last).multiplyScalar(-1).normalize();
+    roamDir.lerp(roamAxis, out * 0.85);
+  }
+  roamLevel(roamDir);
+  const p = last.clone().addScaledVector(roamDir, rnd(ROAM_LEG[0], ROAM_LEG[1]));
+  // 掺指心方向只是"倾向"，不保证落点在场界内：随机游走照样会一路外溢。
+  // 越界的落点直接沿原方向投回场界球面，路点集合就硬性有界了
+  const L = p.length();
+  if (L > ROAM_FIELD) p.multiplyScalar(ROAM_FIELD / L);
+  roam.plan.push(p);
+}
+
+// 换段：丢掉队首路点、补满队列
+function roamNextLeg() {
+  roam.plan.shift();
+  while (roam.plan.length < ROAM_PLAN) roamPush();
+}
+
+// 目标速度、吊臂长度与横滚都按时间轮换，与换段解耦
+function roamTempo(now) {
+  if (now >= roam.speedAt) {
+    roam.gear = rnd(ROAM_SPEED[0], ROAM_SPEED[1]) * SCENE_SCALE;
+    roam.speedAt = now + rnd(ROAM_HOLD[0], ROAM_HOLD[1]) * 1000;
+  }
+  if (now >= roam.boomAt) {
+    roam.boomTo = rnd(ROAM_BOOM[0], ROAM_BOOM[1]);
+    roam.boomAt = now + rnd(ROAM_BOOM_HOLD[0], ROAM_BOOM_HOLD[1]) * 1000;
+  }
+  if (now >= roam.rollAt) {
+    if (roam.barrel) {
+      roam.barrel = 0;
+      roam.rollAt = now + rnd(ROAM_ROLL_OFF[0], ROAM_ROLL_OFF[1]) * 1000;
+    } else {
+      roam.barrel = (Math.random() < 0.5 ? -1 : 1)
+        * ENGINE.rcs.angMax * rnd(0.6, 0.95);
+      roam.rollAt = now + rnd(ROAM_ROLL_ON[0], ROAM_ROLL_ON[1]) * 1000;
+    }
+  }
+}
+
+function roamStart() {
+  auto.segs = null;
+  // 机位由 cam 反算而不是读 camera.position：后者要等 applyCamera 跑过一帧
+  // 才有值，切模式这一步不该依赖调用时机
+  const here = stateCamPos(cam);
+  roam.fwd.subVectors(cam.target, here);
+  roamLevel(roam.fwd, ROAM_PITCH_HARD);   // 只兜极区，仰角带内的交接不改朝向
+  // 吊臂进区间、注视点由机位反推：机位 = 注视点 − 吊臂×航向 恒等于当前机位，
+  // 所以切进漫游没有跳变。反过来（吊臂接管当前轨道半径）会留下一条 160su
+  // 的长臂，转弯时把相机甩到主引擎上限之外
+  roam.boom = THREE.MathUtils.clamp(cam.radius, ROAM_BOOM[0], ROAM_BOOM[1]);
+  roam.pos.copy(here).addScaledVector(roam.fwd, roam.boom);
+  roam.boomAt = 0;
+  /* 接管当前动量，不平白丢一截速度。手动的动量在 throttle.v 里，巡游的
+     动量在半径变化率 vel.r 里（半径减小即前进，取负号），两条入口都要认，
+     否则从巡游主燃段切进来会一帧掉到 0。动量既然由漫游接管，就得把节流阀
+     清干净，否则 throttleStep 的泄放会再推一次。 */
+  roam.v = THREE.MathUtils.clamp(
+    Math.max(throttle.v, -vel.r), 0, ENGINE.main.vFwd);
+  throttle.gear = 0; throttle.v = 0;
+  roam.turn = 0;
+  roam.omega.set(0, 0, 0);
+  roam.boomV = 0;
+  roam.barrel = 0;
+  roam.speedAt = 0;
+  roam.rollAt = performance.now() + rnd(ROAM_ROLL_OFF[0], ROAM_ROLL_OFF[1]) * 1000;
+  roam.plan.length = 0;
+  roamNextLeg();
+  roamTempo(performance.now());
+}
+
+// 一步积分：换段判定 -> 转向 -> 加减速 -> 推进 -> 滚转 -> 写 goal -> 扫描
+function roamStep(dt, now) {
+  roamTempo(now);
+  /* 硬缰绳：转弯半径 = 航速 / 角速度上限，路点再怎么有界，一次大掉头照样
+     能把机身甩到场界外一大截。真跑远了就直接以银心为目标、同时减速（半径
+     跟着缩小），别再等下一个路点。缰绳生效期间不换段——那会儿路点全在
+     身后，逐帧丢段只会把队列空转掉，掉头动作反而做不出来。 */
+  const far = roam.pos.length();
+  const leash = far > ROAM_FIELD * 1.2;
+  roamDir.subVectors(roam.plan[0], roam.pos);
+  const wpDist = roamDir.length();
+  if (!leash && (wpDist < Math.max(10, roam.v * 1.2)
+      || (roamDir.dot(roam.fwd) < 0 && wpDist < ROAM_LEG[0]))) {
+    roamNextLeg();
+    roamDir.subVectors(roam.plan[0], roam.pos);
+  }
+  if (leash) roamDir.copy(roam.pos).multiplyScalar(-1);
+  roamLevel(roamDir);
+
+  const rcs = ENGINE.rcs;
+  const ang = Math.acos(THREE.MathUtils.clamp(roam.fwd.dot(roamDir), -1, 1));
+  roamAxis.crossVectors(roam.fwd, roamDir);
+  if (roamAxis.lengthSq() < 1e-10) {
+    // 近反向共线：绕世界 Y 掉头，航向本身近竖直时退回绕 X
+    roamAxis.copy(Math.abs(roam.fwd.y) < 0.95 ? FLIP_UP : FLIP_RIGHT);
+    roamAxis.addScaledVector(roam.fwd, -roamAxis.dot(roam.fwd));
+  }
+  roamAxis.normalize();
+  /* 期望角速度 sqrt(2·角加速度·夹角) 截到 angMax，再按角加速度限变化率。
+     限的是角速度**矢量**不是标量幅值：换路点时转轴常常整个翻向，只限幅值
+     会让 ω 在一帧内从 +angMax 跳到 −angMax，等效角加速度是上限的几十倍，
+     航迹在路点处出现折角式急抖。
+     另外自动模式以世界 Y 定基，机体实际是绕世界轴整体转，机体角速率 =
+     视线扫掠率 / sinφ，所以上限要乘一个 sinφ 才是真的"不超 angMax"。
+     扫描期间再收到三成——用满 30°/s 时机身一秒就能把目标扫出画面，焦点
+     撑不到 3s；少用引擎不算越限。跑到场界外正在掉头时不收，先回来要紧。 */
+  const steady = auto.scan >= 0 && far < ROAM_FIELD * 1.2 ? 0.3 : 1;
+  const sinPhi = Math.max(0.6, Math.hypot(roam.fwd.x, roam.fwd.z));
+  const wantTurn = Math.min(rcs.angMax * steady * sinPhi,
+    Math.sqrt(2 * rcs.angAccel * ang), ang / Math.max(dt, 1e-3));
+  roamWant.copy(roamAxis).multiplyScalar(wantTurn).sub(roam.omega);
+  const dOmega = rcs.angAccel * dt;
+  if (roamWant.lengthSq() > dOmega * dOmega) roamWant.setLength(dOmega);
+  roam.omega.add(roamWant);
+  const rate = roam.omega.length();
+  if (rate > 1e-6) {
+    roamAxis.copy(roam.omega).divideScalar(rate);
+    roamLevel(roam.fwd.applyAxisAngle(roamAxis, rate * dt), ROAM_PITCH_HARD);
+  }
+  roam.turn = rate;
+
+  // 提速吃 accel、降速吃 brake，与手动节流同一套限幅。缰绳期间压低档位：
+  // 转弯半径正比于航速，慢下来才掉得回场界里
+  const m = ENGINE.main;
+  const gear = leash ? Math.min(roam.gear, ROAM_LEASH_SPEED * SCENE_SCALE) : roam.gear;
+  const err = gear - roam.v;
+  if (err) {
+    const lim = (err > 0 ? m.accel : m.brake) * dt;
+    roam.v += THREE.MathUtils.clamp(err, -lim, lim);
+  }
+  roam.pos.addScaledVector(roam.fwd, roam.v * dt);
+
+  // 花样飞行：平时转弯压坡度（坡度跟着偏航角速度走），间或来一段整圈横滚。
+  // 这里的偏航分量直接取自本帧下达的转向指令，比从视线差分反推更准
+  if (roam.barrel) {
+    autoRoll(roam.barrel, dt);
+  } else {
+    roamUp.copy(FLIP_UP).addScaledVector(roam.fwd, -FLIP_UP.dot(roam.fwd));
+    const yawRate = roamUp.lengthSq() > 1e-8
+      ? roamAxis.dot(roamUp.normalize()) * roam.turn : 0;
+    autoRollTo(THREE.MathUtils.clamp(-yawRate * 2.2, -ROAM_BANK, ROAM_BANK), dt);
+  }
+
+  // 视角拉动：注视点就是轨迹上的点，相机吊在它后面 boom 远处（机位因此
+  // 落在航线上更早的位置）。扫描时把吊臂放长——相机相对那颗星退得慢，
+  // 它能在画面里多留几秒，正好凑够 3-5s 的焦点；扫描结束再收回来
+  const boomTo = auto.scan >= 0 ? Math.max(roam.boomTo, ROAM_BOOM_FAR) : roam.boomTo;
+  const boomErr = boomTo - roam.boom;
+  // 收短＝相机比注视点跑得快（上限还远在主引擎前进上限之内，可以放开些）；
+  // 放长＝相机跑得慢，得压在上面那条 1/4 判据之内。速率本身也要按 accel
+  // 收敛：直接把速率阶跃到上限，等效加速度是主引擎的好几倍，画面会顿一下
+  const boomWant = THREE.MathUtils.clamp(boomErr / 0.6,
+    -Math.max(2, roam.v * 0.6), Math.max(0.2, roam.v * ROAM_BOOM_RATE));
+  roam.boomV += THREE.MathUtils.clamp(boomWant - roam.boomV,
+    -m.accel * dt, m.accel * dt);
+  roam.boom += roam.boomV * dt;
+
+  cam.goalTarget.copy(roam.pos);
+  cam.goalRadius = roam.boom;
+  cam.goalTheta = unwrap(Math.atan2(-roam.fwd.x, -roam.fwd.z), cam.goalTheta);
+  cam.goalPhi = Math.acos(THREE.MathUtils.clamp(-roam.fwd.y, -1, 1));
+
+  // 机位 = 注视点 − 吊臂×航向，所以相机的前向速度还要减去吊臂伸长速率，
+  // 空心游标读的才是相机真正被指令的速度
+  auto.gear = gear - roam.boomV;
+  auto.engine = err < -0.5 * SCENE_SCALE ? "retro" : "main";
+  auto.rcsOn = roam.turn > 0.05 || Math.abs(auto.rollRate) > 0.05;
+  roamScan(now);
+}
+
+/* 扫描顺路星体：只锁定展示，不改航线。候选＝落在机头锥角内、距离适中、
+   而且此刻真的在画面里的星；焦点 3-5s，一旦转出视野立即取消。 */
+/* 锥角与距离窗一起决定焦点能撑多久：星离轴 θ0、距离 d0，逼近到
+   d ≈ d0·sinθ0/tan(半视场) 时就滑出画面。锥角 9°、距离取"还有 4-8 秒
+   才掠过"，算出来的可见时长正好落在 3-5s 这一档；锥角开大或距离取近，
+   焦点会在 1s 内就被出视野判定掐掉。 */
+const SCAN_COS = Math.cos((6 * Math.PI) / 180);
+const SCAN_LEAD = [5, 10];             // s，候选星距离 = 航速 × 这个区间
+const SCAN_MIN = 60, SCAN_MAX = 150;   // su，航速极低/极高时的距离兜底
+const SCAN_BEST = 5;                   // 只在最贴航向的这几颗里随机挑
+const SCAN_HOLD = [3, 5];              // s，焦点时长
+const SCAN_GAP = [2.5, 6];             // s，两次扫描之间的间隔
+
+// visible[] 只判深度，"在画面里"还得看投影落没落进视口
+function inView(i) {
+  if (!visible[i]) return false;
+  const x = projected[i * 2], y = projected[i * 2 + 1];
+  return x >= 0 && x <= vw() && y >= 0 && y <= vh();
 }
 
 // 只在决策瞬间线性扫一次全表，禁止逐帧
-function nearestStarTo(pos) {
-  let best = 0, bestD = Infinity;
+function scanPick() {
+  const p = camera.position, f = roam.fwd;
+  const near = Math.max(SCAN_MIN, Math.min(SCAN_MAX, roam.v * SCAN_LEAD[0]));
+  const far = Math.max(near + 10, Math.min(SCAN_MAX, roam.v * SCAN_LEAD[1]));
+  const near2 = near * near, far2 = far * far;
+  const hits = [];     // [余弦, 序号]，只留最贴航向的几颗
   for (let i = 0; i < N; i++) {
-    const dx = positions[i * 3] - pos.x;
-    const dy = positions[i * 3 + 1] - pos.y;
-    const dz = positions[i * 3 + 2] - pos.z;
-    const d = dx * dx + dy * dy + dz * dz;
-    if (d < bestD) { bestD = d; best = i; }
+    if (!visible[i]) continue;
+    const dx = positions[i * 3] - p.x;
+    const dy = positions[i * 3 + 1] - p.y;
+    const dz = positions[i * 3 + 2] - p.z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 < near2 || d2 > far2) continue;
+    const c = (dx * f.x + dy * f.y + dz * f.z) / Math.sqrt(d2);
+    if (c < SCAN_COS) continue;
+    if (!inView(i)) continue;
+    hits.push([c, i]);
   }
-  return best;
+  if (!hits.length) return -1;
+  hits.sort((a, b) => b[0] - a[0]);
+  return hits[(Math.random() * Math.min(SCAN_BEST, hits.length)) | 0][1];
 }
 
-// 就近展示：转头看向那颗星并短暂驻留，机位钉在 pivot
-function wanderShow(i) {
-  const from = snapshotCam();
-  const pivot = stateCamPos(from);
-  const pt = starVec(i).clone();
-  levelPoint(pivot, pt, 0.12);
-  const aim = aimFrom(pivot, pt, from.theta);
-  const hold = rnd(4, 7);
-  const orbit = { ...aim, target: aim.target.clone(),
-                  theta: aim.theta
-                    + Math.min(rnd(0.08, 0.2), hold * ENGINE.rcs.angMax * 0.6) };
-  return [
-    { to: aim,   dur: angTime(from, aim), ease: easeSoft, engine: "rcs", pivot },
-    { to: orbit, dur: hold,               ease: (u) => u, engine: "orbit" },
-  ];
-}
-
-function nextWander() {
-  if (selected >= 0) {
-    select(-1);                    // 展示结束，继续赶路
-  } else if (auto.canShow && Math.random() < 0.4) {
-    auto.canShow = false;
-    const i = nearestStarTo(camera.position);
-    select(i);
-    startSegs(wanderShow(i));
+function roamScan(now) {
+  if (auto.scan >= 0) {
+    if (now >= auto.scanEnd || !inView(auto.scan)) {
+      if (selected === auto.scan) select(-1);
+      auto.scan = -1;
+      auto.scanNext = now + rnd(SCAN_GAP[0], SCAN_GAP[1]) * 1000;
+    }
     return;
   }
-  auto.canShow = false;
-  // 连续小弧度绕行：沿当前航向小角偏转前推；跑出场界时强制朝银心侧回弯
-  const from = snapshotCam();
-  const pos = stateCamPos(from);
-  const heading = from.target.clone().sub(pos);
-  heading.y = 0;
-  if (heading.lengthSq() < 1e-6) {
-    heading.set(-Math.sin(from.theta), 0, -Math.cos(from.theta));
-  }
-  heading.normalize();
-  let sign = Math.random() < 0.5 ? -1 : 1;
-  if (pos.length() > FIELD_R * 1.8) {
-    // cross(航向, 指心方向).y 的符号即回弯侧
-    sign = Math.sign(heading.x * pos.z - heading.z * pos.x) || 1;
-  }
-  heading.applyAxisAngle(FLIP_UP, sign * rnd(0.15, 0.5));
-  const dist = rnd(25, 70);
-  const point = pos.clone().addScaledVector(heading, dist);
-  point.y = THREE.MathUtils.clamp(pos.y + rnd(-5, 5), -FIELD_R, FIELD_R);
-  const arc = (Math.random() < 0.5 ? -1 : 1) * rnd(0.1, 0.3);
-  // 终末半径小于路点距离，保证整段向前
-  startSegs(flyTo(point, Math.max(6, dist * rnd(0.25, 0.55)), rnd(0.3, 1.0), arc));
-  auto.canShow = true;             // 抵达路点后允许就近展示
+  if (now < auto.scanNext) return;
+  // 跑到场界外时不起扫描：那会儿正忙着掉头，收转向只会飞得更远
+  if (roam.pos.length() > ROAM_FIELD) { auto.scanNext = now + 800; return; }
+  const i = scanPick();
+  if (i < 0) { auto.scanNext = now + 500; return; }   // 附近没顺路的，稍后再看
+  select(i);
+  auto.scan = i;
+  auto.scanEnd = now + rnd(SCAN_HOLD[0], SCAN_HOLD[1]) * 1000;
 }
 
+/* 巡游选目标：星体与坐标点各半。
+   星体：上一项也是星体时，有 25% 概率跳到它的关联曲目，让巡游沿曲风网络
+   走一段。坐标点：其中 25% 是"出系再掉头回望银河"的全景变体。 */
 function nextAction() {
-  // 上一步是聚焦时，有 25% 概率沿相近曲目走
-  if (auto.lastWasSelect && selected >= 0 && Math.random() < 0.25
-      && neighbours[selected].length) {
-    const e = neighbours[selected][(Math.random() * neighbours[selected].length) | 0];
-    const other = edgeIdx[e * 2] === selected ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2];
-    select(other);
-    startSegs(flyTo(starVec(other), rnd(12, 26), 10));
-    auto.lastWasSelect = true;
-  } else if (Math.random() < 0.55) {
-    const i = (Math.random() * N) | 0;
-    select(i);
-    startSegs(flyTo(starVec(i), rnd(12, 26), 10));
-    auto.lastWasSelect = true;
-  } else {
-    const wide = Math.random() < 0.18;
-    // 纯运镜段不留选中，信息框和引线挂着不动会显得镜头脱节；
-    // 但退到全景是例外 —— 那正好用引线把选中的星指出来
-    if (!wide) select(-1);
-    if (wide) {
-      startSegs(panorama(rnd(4, 8), Math.random() < 0.5
-        ? 0 : (Math.random() < 0.5 ? -1 : 1) * rnd(1.0, 1.6)));
+  const budget = rnd(CRUISE_CYCLE[0], CRUISE_CYCLE[1]);
+  if (Math.random() < 0.5) {
+    let i;
+    if (auto.lastWasSelect && selected >= 0 && neighbours[selected].length
+        && Math.random() < 0.25) {
+      const e = neighbours[selected][(Math.random() * neighbours[selected].length) | 0];
+      i = edgeIdx[e * 2] === selected ? edgeIdx[e * 2 + 1] : edgeIdx[e * 2];
     } else {
-      const point = new THREE.Vector3(rnd(-FIELD_R, FIELD_R),
-        rnd(-FIELD_R * 0.4, FIELD_R * 0.4), rnd(-FIELD_R, FIELD_R));
-      const arc = (Math.random() < 0.5 ? -1 : 1) * rnd(0.2, 0.7);
-      startSegs(flyTo(point, rnd(20, 90), rnd(2.5, 6.0), arc));
+      i = (Math.random() * N) | 0;
     }
-    auto.lastWasSelect = false;
+    select(i);
+    startSegs(padHold(flyTo(starVec(i), rnd(12, 26)), budget, 0.15, 0.35));
+    auto.lastWasSelect = true;
+    return;
   }
+  if (Math.random() < 0.25) {
+    // 全景是例外，选中留着 —— 正好用引线把那颗星从远处指出来。
+    // 出系再 180° 掉头本身就要二十多秒，行程必然吃穿预算；这一档单独给一个
+    // 更长的最短驻留，否则"回望银河"的落点镜头只剩 1.5s 就被换掉
+    startSegs(padHold(panorama(Math.random() < 0.5
+      ? 0 : (Math.random() < 0.5 ? -1 : 1) * rnd(1.0, 1.6)),
+      budget, 0.1, 0.25, PANO_HOLD_MIN));
+  } else {
+    select(-1);   // 纯运镜不留选中，信息框和引线挂着不动会显得镜头脱节
+    const point = new THREE.Vector3(rnd(-FIELD_R, FIELD_R),
+      rnd(-FIELD_R * 0.4, FIELD_R * 0.4), rnd(-FIELD_R, FIELD_R));
+    startSegs(padHold(flyTo(point, rnd(20, 90),
+      (Math.random() < 0.5 ? -1 : 1) * rnd(0.2, 0.7)), budget, 0.15, 0.35));
+  }
+  auto.lastWasSelect = false;
 }
 
 const lookPoint = new THREE.Vector3();
+const autoDir = new THREE.Vector3();
 const pivD0 = new THREE.Vector3();
 const pivD1 = new THREE.Vector3();
 const pivAxis = new THREE.Vector3();
-function stepAuto() {
-  if (!auto.on && !auto.assist) { auto.engine = ""; return; }
+function stepAuto(dt) {
+  if (!auto.on && !auto.assist) {
+    auto.engine = ""; auto.rcsOn = false; auto.gear = 0;
+    return;                          // 残留的 auto.roll 留给 attitudeStep 接手
+  }
+  const now = performance.now();
+  if (auto.on && auto.mode === "wander" && !auto.assist) {
+    roamStep(dt, now);
+    return;
+  }
   if (!auto.segs || auto.idx >= auto.segs.length) {
-    if (auto.assist) { auto.assist = false; auto.segs = null; auto.engine = ""; return; }
-    if (auto.mode === "wander") nextWander(); else nextAction();
+    autoRollTo(0, dt);   // 没有航段可跟就回正，从漫游切过来的滚转也在这里收
+    if (auto.assist) {
+      auto.assist = false; auto.segs = null;
+      auto.engine = ""; auto.rcsOn = false; auto.gear = 0;
+      return;
+    }
+    nextAction();
     return;
   }
 
   const seg = auto.segs[auto.idx];
   auto.engine = seg.engine;
-  const raw = (performance.now() - auto.t0) / (seg.dur * 1000);
+  auto.rcsOn = seg.engine === "rcs";
+  auto.gear = seg.gear || 0;
+  const raw = (now - auto.t0) / (seg.dur * 1000);
   const u = seg.ease(THREE.MathUtils.clamp(raw, 0, 1));
   const f = auto.from, t = seg.to;
   if (seg.pivot) {
@@ -1844,10 +2271,16 @@ function stepAuto() {
     cam.goalTarget.lerpVectors(f.target, t.target, u);
   }
 
+  // 巡游同样压坡度：转向段跟着视线扫过的方向侧倾，入轨驻留时自然回正
+  const sp = Math.sin(cam.goalPhi);
+  autoDir.set(-sp * Math.sin(cam.goalTheta), -Math.cos(cam.goalPhi),
+              -sp * Math.cos(cam.goalTheta));
+  autoRollTo(bankFor(autoDir, dt, CRUISE_BANK, 1.1), dt);
+
   if (raw >= 1) {
     auto.from = { ...t, target: t.target.clone() };
     auto.idx += 1;
-    auto.t0 = performance.now();
+    auto.t0 = now;
   }
 }
 
@@ -1857,6 +2290,7 @@ function setAuto(on, mode = "cruise") {
   if (auto.on === on && (!on || auto.mode === mode)) return;
   auto.on = on;
   auto.mode = on ? mode : "";
+  auto.scan = -1;   // 扫描焦点不跨模式存活；选中本身留着，好接着接敌
   document.body.classList.toggle("auto", on && mode === "cruise");
   document.body.classList.toggle("wander", on && mode === "wander");
   for (const [k, el] of Object.entries(modeBtns)) {
@@ -1866,8 +2300,15 @@ function setAuto(on, mode = "cruise") {
   if (on) {
     auto.segs = null;
     auto.engine = "";
+    auto.rcsOn = false;
+    auto.gear = 0;
     auto.lastWasSelect = false;
-    auto.canShow = false;
+    auto.scanNext = 0;
+    bankHas = false;
+    // 自动模式下姿态输入被逐帧清零，"持续转向银心"这个标志既不会生效也
+    // 不会自清，留着会在用户切回手动的第一帧突然接管操纵
+    steerCenterPersist = false;
+    if (mode === "wander") roamStart();
     bgm.volume = 0.55;
     if (!bgm.src) loadBgm(0, false);
     bgm.play().catch(() => {});    // 自动播放被拦就静默跳过
@@ -2005,7 +2446,12 @@ addEventListener("keydown", (e) => {
   if (e.code === "Space") {
     if (e.target instanceof HTMLButtonElement) return;   // 让聚焦按钮保留原生空格激活
     e.preventDefault();
-    if (!confirmPending()) fireEngage();
+    // 与触屏空格按钮同路：自动模式下有锁定目标就先退出自动再接敌。
+    // 漫游的扫描会一直挂着选中，不退出的话这个键在自动模式里永远是死键
+    if (confirmPending()) return;
+    if (selected < 0) return;
+    setAuto(false);
+    fireEngage();
     return;
   }
   if (e.code === "PageUp") { e.preventDefault(); cycleTarget(-1); return; }
@@ -2121,9 +2567,12 @@ function updateHud(signedSpeed, dt, angRate, radRateSmooth) {
       `${(cx + ux * ar + tanx * at).toFixed(1)},${(cy + uy * ar + tany * at).toFixed(1)}`;
     return `${p(mid + 5, 0)} ${p(mid, -4.5)} ${p(mid, 4.5)}`;
   };
-  // 实心三角=实际速度，空心三角=节流目标档位，同一量程映射
+  // 实心三角=实际速度，空心三角=目标设定速度，同一量程映射。
+  // 自动/辅助驾驶没有节流阀，读的是自动驾驶当前这一段设定的档位
+  const inAuto = auto.on || auto.assist;
   speedMark.setAttribute("points", triPts(arcOf(shownSpeed)));
-  speedSet.setAttribute("points", triPts(arcOf(throttle.gear / SCENE_SCALE)));
+  speedSet.setAttribute("points",
+    triPts(arcOf((inAuto ? auto.gear : throttle.gear) / SCENE_SCALE)));
 
   const rev = shownSpeed < -1;
   hudSvg.classList.toggle("rev", rev);
@@ -2136,9 +2585,13 @@ function updateHud(signedSpeed, dt, angRate, radRateSmooth) {
   const gearErr = Math.abs(throttle.gear - throttle.v) / SCENE_SCALE;
   // 自动/辅助驾驶亮推进程序对应的灯，orbit 段全灭；
   // 手动：姿态灯看角速率，主推灯看节流收敛，反推灯看倒档（启发式兜底）
-  const eng = auto.on || auto.assist ? auto.engine : "";
+  const eng = inAuto ? auto.engine : "";
   const attRate = Math.abs(att.yaw) + Math.abs(att.pitch);
-  ICONS.rcs.classList.toggle("on", eng ? eng === "rcs" : (attRate > 0.04 || turning));
+  const panning = held.has("panU") || held.has("panD") || held.has("panL") || held.has("panR")
+    || !!(joys[0].vx || joys[0].vy);
+  // 漫游是一边主推一边转向的，engine 这一个字段表达不了，另给一路 rcsOn
+  ICONS.rcs.classList.toggle("on",
+    eng ? (eng === "rcs" || auto.rcsOn) : (attRate > 0.04 || turning || panning));
   ICONS.main.classList.toggle("on", eng ? eng === "main"
     : (Math.abs(vt) > 1 || gearErr > 1 || closing));
   ICONS.auto.classList.toggle("on", auto.on || auto.assist);
@@ -2214,7 +2667,7 @@ function frame(now) {
   // 下界不能省：dt 为负会让下面的 pow 指数翻转，平滑系数变成负数，decay 发散
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
-  stepAuto();
+  stepAuto(dt);
   joyStep(dt);          // 杆量先落进姿态/节流输入
   pointerSteerStep();   // 指向线同一路输入
   steerCenterStep();    // 中键长按转向银心，同一路输入
@@ -2451,12 +2904,17 @@ function renderNavBall() {
   } else {
     navTgt.visible = false;
   }
-  if ((auto.on || auto.assist) && auto.segs && auto.segs.length) {
+  // 巡游取剩余分段的终点机位，漫游取预排的路点队列，两者同一条虚线
+  const wander = auto.on && auto.mode === "wander" && !auto.assist;
+  const src = wander ? roam.plan : auto.segs;
+  const from = wander ? 0 : auto.idx;
+  if ((auto.on || auto.assist) && src && src.length > from) {
     const pos = navPathGeom.getAttribute("position");
     pos.setXYZ(0, 0, 0, 0);
-    const k = Math.min(auto.segs.length, NAV_PATH_MAX - 1);
+    const k = Math.min(src.length - from, NAV_PATH_MAX - 1);
     for (let j = 0; j < k; j++) {
-      navWaypoint.copy(stateCamPos(auto.segs[j].to)).sub(camera.position);
+      const p = src[from + j];
+      navWaypoint.copy(wander ? p : stateCamPos(p.to)).sub(camera.position);
       const l = navWaypoint.length();
       if (l > 1e-4) navWaypoint.multiplyScalar(NAV_R / l);
       pos.setXYZ(j + 1, navWaypoint.x, navWaypoint.y, navWaypoint.z);
@@ -2487,14 +2945,17 @@ function openHelp() {
   throttle.gear = 0; throttle.v = 0;
   midRelease(midMouse); midRelease(midTouch);
 }
-function closeHelp() { helpModal.hidden = true; }
+const INIT_GEAR = 50 * SCENE_SCALE;
+function closeHelp() {
+  helpModal.hidden = true;
+  throttle.gear = INIT_GEAR;
+}
 
 helpClose.addEventListener("click", closeHelp);
 helpModal.addEventListener("click", (e) => {
   if (e.target === helpModal) closeHelp();
 });
 helpBtn.addEventListener("click", openHelp);
-// 弹窗打开期间捕获按键：Esc 关闭，其余不落到飞行/搜索快捷键
 addEventListener("keydown", (e) => {
   if (helpModal.hidden) return;
   if (e.key === "Escape") closeHelp();
@@ -2506,4 +2967,7 @@ try { helpSeen = !!localStorage.getItem("hud.helpSeen"); } catch { /* 隐私模�
 if (!helpSeen) {
   try { localStorage.setItem("hud.helpSeen", "1"); } catch { /* 隐私模式 */ }
   openHelp();
+} else {
+  throttle.gear = INIT_GEAR;
 }
+
