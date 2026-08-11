@@ -64,9 +64,13 @@ function resetPinch() { pinch = pointers.size === 2 ? pinchState() : null; }
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener("pointerdown", (e) => {
-  if (e.pointerType === "mouse" && e.button !== 0) return;   // 只有左键参与
+  // 鼠标：右键转视角，左键只用来选中；触摸：单指转、双指缩放平移
+  const isMouse = e.pointerType === "mouse";
+  if (isMouse && e.button !== 0 && e.button !== 2) return;
+  const role = isMouse ? (e.button === 2 ? "orbit" : "pick") : "orbit";
   canvas.setPointerCapture(e.pointerId);
-  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: 0, type: e.pointerType });
+  pointers.set(e.pointerId,
+    { x: e.clientX, y: e.clientY, moved: 0, type: e.pointerType, role });
   dragging = true;
   resetPinch();
   clearHover();                 // 拖拽期间不更新悬停，留着会是个跟错星的虚框
@@ -81,6 +85,7 @@ canvas.addEventListener("pointermove", (e) => {
   p.x = e.clientX; p.y = e.clientY;
 
   if (pointers.size === 1) {
+    if (p.role !== "orbit") return;      // 左键拖动不转视角
     cam.goalTheta -= dx * 0.0042;
     cam.goalPhi = THREE.MathUtils.clamp(cam.goalPhi - dy * 0.0042, 0.04, Math.PI - 0.04);
   } else if (pointers.size === 2) {
@@ -103,7 +108,11 @@ function endPointer(e, tap) {
   if (canvas.hasPointerCapture?.(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   dragging = pointers.size > 0;
   resetPinch();
-  if (tap && p.moved < (TAP_SLOP[p.type] ?? 8)) pick(e.clientX, e.clientY, true);
+  // 鼠标只认左键选中，右键松开不该顺手选一颗；触摸轻点照常选中
+  const canPick = p.type === "mouse" ? p.role === "pick" : true;
+  if (tap && canPick && p.moved < (TAP_SLOP[p.type] ?? 8)) {
+    pick(e.clientX, e.clientY, true);
+  }
 }
 canvas.addEventListener("pointerup", (e) => endPointer(e, true));
 canvas.addEventListener("pointercancel", (e) => endPointer(e, false));
@@ -485,11 +494,11 @@ function hover(x, y) {
   tooltip.style.opacity = "1";
 }
 
-const infobox = document.getElementById("infobox");
+const panelLeft = document.getElementById("panel-left");
+const panelRight = document.getElementById("panel-right");
 const elTitle = document.getElementById("title");
-const elAuthor = document.getElementById("author");
-const elMeta = document.getElementById("meta");
-const elStar = document.getElementById("star-line");
+const F = Object.fromEntries(["author", "date", "view", "tyc", "sp", "mag", "dist", "cam"]
+  .map((k) => [k, document.getElementById(`f-${k}`)]));
 const elLinks = document.getElementById("links");
 const elLinkCount = document.getElementById("link-count");
 const elLinkList = document.getElementById("link-list");
@@ -507,7 +516,8 @@ function select(i) {
   }
   selected = i;
   if (i < 0) {
-    infobox.classList.remove("on");
+    panelLeft.classList.remove("on");
+    panelRight.classList.remove("on");
     linkLayer.classList.remove("sel");
     flare.needsUpdate = true; edgeGeom.getAttribute("alpha").needsUpdate = true;
     return;
@@ -523,20 +533,21 @@ function select(i) {
   edgeGeom.getAttribute("alpha").needsUpdate = true;
 
   const t = tracks[i];
-  infobox.classList.add("on");
+  panelLeft.classList.add("on");
+  panelRight.classList.add("on");
   elTitle.textContent = t.t;
 
   // 巡游时照常挂播放器，靠 autoplay=0 让它停在首帧、不出声，
   // 于是背景音乐可以一直放
   mountPlayer(i);
 
-  elAuthor.innerHTML = t.a
-    ? `<em>UP 主</em>${escapeHtml(t.a)}`
-    : `<em>UP 主</em>UID ${t.u}`;
-  elMeta.innerHTML = `投稿 <b>${t.d}</b> · 播放 <b>${fmt.format(t.v)}</b>`;
-  const sp = t.y ? ` · ${t.y}` : "";
-  elStar.textContent =
-    `${t.s}${sp} · ${fmt.format(Math.round(t.l))} 光年 · 视星等 ${t.m}`;
+  F.author.textContent = t.a || `UID ${t.u}`;
+  F.date.textContent = t.d;
+  F.view.textContent = fmt.format(t.v);
+  F.tyc.textContent = t.s;
+  F.sp.textContent = t.y || "—";
+  F.mag.textContent = t.m.toFixed(2);
+  F.dist.textContent = `${fmt.format(Math.round(t.l))} ly`;
   fillLinks(i);
 
   cam.goalTarget.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
@@ -612,7 +623,7 @@ function updateMarker() {
 
   // 引线从信息框朝向恒星的那条边引出，止于六边形边缘。
   // 用射线与矩形求交，桌面端的左侧卡片和移动端的底部抽屉都能自然出线。
-  const box = infobox.getBoundingClientRect();
+  const box = panelLeft.getBoundingClientRect();
   const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
   const vx = sx - cx, vy = sy - cy;
   const hw = box.width / 2 || 1, hh = box.height / 2 || 1;
@@ -664,6 +675,17 @@ function mountPlayer(i) {
    连续聚焦时有 25% 概率跳到相近曲目，让巡游沿着曲风网络走一段。 */
 const autoBtn = document.getElementById("auto-btn");
 const bgm = document.getElementById("bgm");
+
+// 曲目顺序即优先级，放完最后一首回到第一首
+const BGM_LIST = ["audio/star-wish.m4a", "audio/star-lalala.m4a"];
+let bgmIndex = 0;
+
+function loadBgm(i, play) {
+  bgmIndex = ((i % BGM_LIST.length) + BGM_LIST.length) % BGM_LIST.length;
+  bgm.src = new URL(BGM_LIST[bgmIndex], base).href;
+  if (play) bgm.play().catch(() => {});
+}
+bgm.addEventListener("ended", () => loadBgm(bgmIndex + 1, auto.on));
 
 const auto = {
   on: false, t0: 0, lastWasSelect: false,
@@ -778,10 +800,13 @@ function setAuto(on) {
   auto.on = on;
   document.body.classList.toggle("auto", on);
   autoBtn.textContent = on ? "退出巡游" : "自动巡游";
+  elHudMode.textContent = on ? "自动驾驶" : "手动";
+  refreshBgmName();
   if (on) {
     auto.to = null;
     auto.lastWasSelect = false;
     bgm.volume = 0.55;
+    if (!bgm.src) loadBgm(0, false);
     bgm.play().catch(() => {});    // 自动播放被拦就静默跳过
   } else {
     bgm.pause();
@@ -875,6 +900,92 @@ addEventListener("keydown", (e) => {
   }
 });
 
+/* ── 底部弧形仪表 ───────────────────────────────────
+   两条同心弧画在视口下方的圆心上，只露出顶部一小段。
+   内弧是速度（三角游标），外弧是当前曲目进度。 */
+const hudSvg = document.getElementById("hud");
+const arcBgmBg = document.getElementById("arc-bgm-bg");
+const arcBgm = document.getElementById("arc-bgm");
+const arcSpeedBg = document.getElementById("arc-speed-bg");
+const speedTicks = document.getElementById("speed-ticks");
+const speedMark = document.getElementById("speed-mark");
+const elBgmName = document.getElementById("bgm-name");
+const elHudSpeed = document.getElementById("hud-speed");
+const elHudMode = document.getElementById("hud-mode");
+
+const A0 = -152, A1 = -28;                    // 弧的起止角，度；-90 是正上方
+const polar = (cx, cy, r, deg) => {
+  const a = (deg * Math.PI) / 180;
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+};
+function arcPath(cx, cy, r, d0, d1) {
+  const [x0, y0] = polar(cx, cy, r, d0);
+  const [x1, y1] = polar(cx, cy, r, d1);
+  const large = Math.abs(d1 - d0) > 180 ? 1 : 0;
+  const sweep = d1 > d0 ? 1 : 0;
+  return `M${x0.toFixed(1)},${y0.toFixed(1)} `
+       + `A${r},${r} 0 ${large} ${sweep} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+}
+
+let hudGeom = null;
+function layoutHud() {
+  const w = hudSvg.clientWidth, h = hudSvg.clientHeight;
+  hudSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  const cx = w / 2;
+  const rSpeed = Math.min(w * 0.22, 260);
+  const rBgm = rSpeed + 22;
+  // 圆心压到视口外，并保证弧的两端留在下沿以上，不被切掉
+  const cy = h - 34 + rBgm * Math.sin((-A1 * Math.PI) / 180);
+  hudGeom = { cx, cy, rSpeed, rBgm };
+
+  arcSpeedBg.setAttribute("d", arcPath(cx, cy, rSpeed, A0, A1));
+  arcBgmBg.setAttribute("d", arcPath(cx, cy, rBgm, A0, A1));
+  arcBgm.setAttribute("d", arcPath(cx, cy, rBgm, A0, A1));
+  arcBgm.style.strokeDasharray = `0 ${arcBgm.getTotalLength()}`;
+
+  speedTicks.innerHTML = Array.from({ length: 9 }, (_, k) => {
+    const d = A0 + ((A1 - A0) * k) / 8;
+    const [ax, ay] = polar(cx, cy, rSpeed - 7, d);
+    const [bx, by] = polar(cx, cy, rSpeed - (k % 4 === 0 ? 16 : 11), d);
+    return `<line class="tick" x1="${ax.toFixed(1)}" y1="${ay.toFixed(1)}"`
+         + ` x2="${bx.toFixed(1)}" y2="${by.toFixed(1)}"/>`;
+  }).join("");
+}
+
+let shownSpeed = 0;
+function updateHud(lySpeed) {
+  if (!hudGeom) return;
+  const { cx, cy, rSpeed, rBgm } = hudGeom;
+
+  // 速度游标：开方压缩量程，低速段才有分辨率
+  shownSpeed += (lySpeed - shownSpeed) * 0.15;
+  const frac = THREE.MathUtils.clamp(Math.sqrt(shownSpeed / 900), 0, 1);
+  const d = A0 + (A1 - A0) * frac;
+  // 游标放在速度弧内侧朝外指，放外侧会顶到进度弧、也容易被下沿切掉
+  const [tx, ty] = polar(cx, cy, rSpeed - 8, d);
+  const [lx, ly] = polar(cx, cy, rSpeed - 20, d - 2.4);
+  const [rx, ry] = polar(cx, cy, rSpeed - 20, d + 2.4);
+  speedMark.setAttribute("points",
+    `${tx.toFixed(1)},${ty.toFixed(1)} ${lx.toFixed(1)},${ly.toFixed(1)} `
+    + `${rx.toFixed(1)},${ry.toFixed(1)}`);
+  elHudSpeed.textContent = shownSpeed.toFixed(shownSpeed < 100 ? 1 : 0);
+
+  const total = arcBgm.getTotalLength();
+  const p = bgm.duration ? THREE.MathUtils.clamp(bgm.currentTime / bgm.duration, 0, 1) : 0;
+  arcBgm.style.strokeDasharray = `${(total * p).toFixed(1)} ${total.toFixed(1)}`;
+  void rBgm;
+}
+
+const BGM_TITLE = { "star-wish.m4a": "星愿 StarWish", "star-lalala.m4a": "StarLaLaLa" };
+function refreshBgmName() {
+  const f = (bgm.currentSrc || "").split("/").pop();
+  elBgmName.textContent = bgm.paused && !auto.on
+    ? "—" : (BGM_TITLE[f] || "—");
+}
+bgm.addEventListener("loadedmetadata", refreshBgmName);
+bgm.addEventListener("play", refreshBgmName);
+bgm.addEventListener("pause", refreshBgmName);
+
 /* ── 主循环 ─────────────────────────────────────────── */
 
 function resize() {
@@ -886,6 +997,7 @@ function resize() {
   const dpr = renderer.getPixelRatio();
   rtPrev.setSize(w * dpr, h * dpr);
   rtNext.setSize(w * dpr, h * dpr);
+  layoutHud();
 }
 addEventListener("resize", resize);
 resize();
@@ -911,8 +1023,14 @@ function frame(now) {
   camVel.subVectors(camera.position, lastCamPos)
         .divideScalar(Math.max(dt, 1e-3) * Math.max(cam.radius, 1));
   const speed = camVel.length();
+  const lySpeed = camVel.length() * Math.max(cam.radius, 1) / SCENE_SCALE;
   lastCamPos.copy(camera.position);
   starMat.uniforms.uCamVel.value.copy(camVel);
+  updateHud(lySpeed);
+  if (selected >= 0) {
+    F.cam.textContent =
+      `${fmt.format(Math.round(camera.position.distanceTo(starVec(selected)) / SCENE_SCALE))} ly`;
+  }
 
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
