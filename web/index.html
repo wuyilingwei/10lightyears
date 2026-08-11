@@ -244,8 +244,10 @@
                     rgba(126, 200, 255, .20), rgba(126, 200, 255, .04)); }
   #targets.on .target { opacity: .9; }
   .target:hover { opacity: 1; filter: brightness(1.5); }
-  /* 数字键预选：高亮候选，等按空格确认才真正切换过去 */
-  .target.pending {
+  /* 数字键预选：高亮候选，等按空格确认才真正切换过去；限定在 #targets.on
+     下——不然槽位隐藏态时 .target.pending 的选择器特异性会盖过 .target 的
+     opacity:0，把本该藏起来的槽位强制顶出来 */
+  #targets.on .target.pending {
     opacity: 1; outline: 1px dashed var(--accent); outline-offset: 2px;
   }
   .target .t { flex: 1; min-width: 0; color: var(--text);

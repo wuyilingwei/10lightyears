@@ -245,22 +245,37 @@ function endPointer(e, tap) {
 canvas.addEventListener("pointerup", (e) => endPointer(e, true));
 canvas.addEventListener("pointercancel", (e) => endPointer(e, false));
 
-/* 鼠标中键：按下立即清速度；按住不放超过阈值则持续转向银心，松开即停。
-   不进 pointers 表，与左右键的选中/指向线互不相扰。 */
-let midHeld = false, midTimer = null, steerCenter = false;
+/* 鼠标中键与触屏中键按钮：按下立即清速度；按住不放超过阈值则持续转向
+   银心，松开即停。两个输入源各自一份独立状态（held/timer），不共享同一个
+   计时器/标记——否则一个源的按下会顶掉另一个源还没触发的定时器引用，
+   导致短按被另一路的长按误判打断，或反过来把短按误判成长按。steerCenter
+   是两路的或：任一路还处在"按住超过阈值"就继续转。不进 pointers 表，
+   与左右键的选中/指向线互不相扰。 */
+let steerCenter = false;
+const midMouse = { held: false, timer: null, fired: false };
+const midTouch = { held: false, timer: null, fired: false };
+function midPress(st) {
+  st.held = true; st.fired = false;
+  throttle.gear = 0; throttle.v = 0;
+  st.timer = setTimeout(() => {
+    if (st.held) { st.fired = true; steerCenter = midMouse.fired || midTouch.fired; }
+  }, 350);
+}
+function midRelease(st) {
+  st.held = false; st.fired = false;
+  clearTimeout(st.timer);
+  steerCenter = midMouse.fired || midTouch.fired;
+}
 canvas.addEventListener("pointerdown", (e) => {
   if (e.pointerType !== "mouse" || e.button !== 1) return;
   e.preventDefault();
-  midHeld = true;
-  throttle.gear = 0; throttle.v = 0;
-  midTimer = setTimeout(() => { if (midHeld) steerCenter = true; }, 350);
+  midPress(midMouse);
 });
 addEventListener("pointerup", (e) => {
   if (e.pointerType !== "mouse" || e.button !== 1) return;
-  midHeld = false; steerCenter = false;
-  clearTimeout(midTimer);
+  midRelease(midMouse);
 });
-addEventListener("blur", () => { midHeld = false; steerCenter = false; clearTimeout(midTimer); });
+addEventListener("blur", () => { midRelease(midMouse); midRelease(midTouch); });
 
 // 银心方向在相机系里的左右/上下分量，接近时收窄输入，转到位就停，不来回摆
 function steerCenterStep() {
@@ -284,7 +299,7 @@ const panRight = new THREE.Vector3();
 const panUp = new THREE.Vector3();
 
 addEventListener("keydown", (e) => {
-  if (e.target instanceof HTMLInputElement) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (MOVE_KEYS[e.code]) { held.add(MOVE_KEYS[e.code]); e.preventDefault(); }
 });
 addEventListener("keyup", (e) => {
@@ -564,14 +579,19 @@ function joyStep(dt) {
     throttle.gear = THREE.MathUtils.clamp(
       throttle.gear - jr.vy * dt * 400 * SCENE_SCALE, GEAR_MIN, GEAR_MAX);
   }
-  if (jr.vx > 0) { held.add("rollR"); held.delete("rollL"); }
-  else if (jr.vx < 0) { held.add("rollL"); held.delete("rollR"); }
-  else { held.delete("rollL"); held.delete("rollR"); }
+  // 只在右杆真的被按住时才碰 held 里的滚转标记——否则左杆单独按住时
+  // jr.vx 恒为静止默认值 0，会走进 else 分支把键盘 Q/E 刚 add 的滚转清掉
+  if (jr.id >= 0) {
+    if (jr.vx > 0) { held.add("rollR"); held.delete("rollL"); }
+    else if (jr.vx < 0) { held.add("rollL"); held.delete("rollR"); }
+    else { held.delete("rollL"); held.delete("rollR"); }
+  }
 }
 
 /* ── 指向线操控：右键/触屏单指按住不放，转向由「光标与屏幕中心的
    距离」决定，而不是拖拽增量——按住不动也会持续转，越靠边转得越快。
-   与右摇杆共用 att.inYaw/inPitch 这条输入线路，每帧读当前指针位置。 */
+   俯仰/偏航现在只有这一条输入线路（右摇杆已改接油门与翻滚），每帧读
+   当前指针位置。 */
 const elSteerLine = document.getElementById("steer-line");
 const elSteerDot = document.getElementById("steer-dot");
 const STEER_DEAD = 10;    // px，中心附近的死区，免得手抖乱转
@@ -1030,19 +1050,15 @@ spcBtn.addEventListener("pointerdown", (e) => {
   fireEngage();
 });
 
-// 触屏中键按钮：与鼠标中键完全同路——按下清速度，按住 350ms 转银心，松开即停
+// 触屏中键按钮：与鼠标中键同职能、独立状态（见 midMouse/midTouch 定义处）
 const midBtn = document.getElementById("mid-btn");
-const midBtnStop = () => { midHeld = false; steerCenter = false; clearTimeout(midTimer); };
 midBtn.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   midBtn.setPointerCapture(e.pointerId);
-  midHeld = true;
-  throttle.gear = 0; throttle.v = 0;
-  midTimer = setTimeout(() => { if (midHeld) steerCenter = true; }, 350);
+  midPress(midTouch);
 });
-midBtn.addEventListener("pointerup", midBtnStop);
-midBtn.addEventListener("pointercancel", midBtnStop);
-addEventListener("blur", midBtnStop);
+midBtn.addEventListener("pointerup", () => midRelease(midTouch));
+midBtn.addEventListener("pointercancel", () => midRelease(midTouch));
 
 const elTargets = document.getElementById("targets");
 const TARGET_MAX = 8;        // 每侧四个槽位
@@ -1059,25 +1075,22 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-/* 面板剪影：近似平行四边形——顶边与底边同方向倾斜（不是两端对收的等腰梯形），
-   外侧角钉在 0/h（不会为负），内侧角分别下压/上提；顶边幅度明显小于底边
-   （"稍微压一点点"），底边幅度即原倾角，与面板尺寸无关。剪影和描边多边形
-   共用同一组顶点；空板高度不足时收窄到极限会缩成尖劈。 */
-const PANEL_SKEW_DEG = 6;       // 底边倾角
-const PANEL_SKEW_TOP_DEG = 2;   // 顶边倾角，同方向、幅度小很多
+/* 面板剪影：就是平行四边形——左右两边保持原长度整体错开，顶边与底边
+   互相平行（同一个倾角），不再分内外侧、不再收窄。内容（文字、播放器）
+   跟着同一个角度斜切，天然与顶边、底边都平行。剪影和描边多边形共用
+   同一组顶点；空板高度不足时收窄到极限会缩成三角形。 */
+const PANEL_SKEW_DEG = 6;
 
 function syncSkew() {
   for (const [el, innerRight] of [[panelLeft, true], [panelRight, false]]) {
     // rotateY 下 getBoundingClientRect 是投影包围盒，必须用 offset 尺寸
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) continue;
-    const drop = Math.min(w * Math.tan((PANEL_SKEW_DEG * Math.PI) / 180), h / 2);
-    const dropTop = Math.min(w * Math.tan((PANEL_SKEW_TOP_DEG * Math.PI) / 180), h / 2);
-    // 顶边外侧角=0（不为负）、内侧角=dropTop；底边内侧角=h-drop、外侧角=h——
-    // 两条边都是"外侧在极值、内侧被推向中间"，且推的方向相同（不再对收）
+    const drop = Math.min(w * Math.tan((PANEL_SKEW_DEG * Math.PI) / 180), h);
+    // 两条对角各自的一端整体下压 drop，顶边/底边因此同斜率、真正平行
     const pts = innerRight
-      ? [[0, dropTop], [w, 0], [w, h - drop], [0, h]]
-      : [[0, 0], [w, dropTop], [w, h], [0, h - drop]];
+      ? [[0, drop], [w, 0], [w, h - drop], [0, h]]
+      : [[0, 0], [w, drop], [w, h], [0, h - drop]];
     el.style.clipPath =
       `polygon(${pts.map(([x, y]) => `${x}px ${y.toFixed(1)}px`).join(", ")})`;
     const edge = el.querySelector(".panel-edge");
@@ -1085,7 +1098,7 @@ function syncSkew() {
     edge.firstElementChild.setAttribute("points",
       pts.map(([x, y]) => `${x},${y.toFixed(1)}`).join(" "));
   }
-  // 内容跟着倾角一起斜切：左板取负角，右板镜像取正，文字与两条边都平行
+  // 内容跟着同一个角度斜切：左板取负角，右板镜像取正，与顶边/底边都平行
   document.documentElement.style.setProperty("--skew-l", `${-PANEL_SKEW_DEG}deg`);
   document.documentElement.style.setProperty("--skew-r", `${PANEL_SKEW_DEG}deg`);
 }
@@ -1139,6 +1152,9 @@ function fillLinks(i) {
 function clearLinks() {
   elTargets.classList.remove("on");
   document.body.classList.remove("has-sel");
+  // 真正清空槽位数据，不只是隐藏——否则取消选中后数字键还能用上一次的
+  // 残留 dataset.i 预选到一个早已不相关的目标
+  for (const el of targetSlots) { el.style.display = "none"; delete el.dataset.i; }
 }
 
 // 数字键 1-8 只预选槽位（高亮候选，不切换），按 Space/空格按钮确认才真正
@@ -1768,7 +1784,8 @@ for (const ev of ["pointerdown", "wheel"]) {
   canvas.addEventListener(ev, () => setAuto(false), { passive: true });
 }
 addEventListener("keydown", (e) => {
-  if (e.target instanceof HTMLInputElement) return;   // 搜索框里打 wasd 不算飞行操作
+  // 搜索框/下拉框里打 wasd 不算飞行操作
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (MOVE_KEYS[e.code]) setAuto(false);
 });
 
@@ -1882,7 +1899,8 @@ addEventListener("keydown", (e) => {
 
 // 空格（确认预选/接敌）、攻击指示器数字键预选、PageUp/PageDown 循环切换
 addEventListener("keydown", (e) => {
-  if (e.target instanceof HTMLInputElement) return;
+  // 输入框/下拉框有焦点时（比如刚点开拖尾强度 #o-trail）这些键交给它原生处理
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.code === "Space") {
     if (e.target instanceof HTMLButtonElement) return;   // 让聚焦按钮保留原生空格激活
     e.preventDefault();
@@ -2123,8 +2141,11 @@ function frame(now) {
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
     trailLevel.k * Math.pow(excess, TRAIL_EXP), 0, trailLevel.max);
+  // want 本身已经按当前档位钳过，外层只需夹 [0,1] 这个绝对安全范围——
+  // 不能再夹 trailLevel.max，否则调低档位时 decay 若已经高于新档上限，
+  // 会被瞬间摁下去而不是像正常过渡那样顺着平滑公式慢慢降
   decay = THREE.MathUtils.clamp(
-    decay + (want - decay) * (1 - Math.pow(0.002, dt)), 0, trailLevel.max);
+    decay + (want - decay) * (1 - Math.pow(0.002, dt)), 0, 1);
 
   // 上一帧衰减后写入 rtNext，场景以 (1-decay) 的增益叠加其上
   renderer.setRenderTarget(rtNext);
@@ -2227,33 +2248,68 @@ navRoot.add(new THREE.Points(navTips, new THREE.PointsMaterial(
   { size: 3, sizeAttenuation: false, vertexColors: true,
     transparent: true, opacity: 0.95, depthWrite: false })));
 
-// 星团抽样微点云：按方向投到单位球面，方向感参照，几何一次构建
-const navStride = Math.max(1, Math.round(N / 400));
-const navStars = [];
-for (let i = 0; i < N; i += navStride) {
-  const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
-  const l = Math.hypot(x, y, z);
-  if (l < 1e-4) continue;
-  navStars.push((x / l) * 0.92, (y / l) * 0.92, (z / l) * 0.92);
-}
-const navCloud = new THREE.BufferGeometry();
-navCloud.setAttribute("position",
-  new THREE.BufferAttribute(new Float32Array(navStars), 3));
-navRoot.add(new THREE.Points(navCloud, new THREE.PointsMaterial(
-  { color: 0xcfe0f2, size: 1, sizeAttenuation: false,
-    transparent: true, opacity: 0.38, depthWrite: false })));
+// 附近的星星：以当前机位为心找最近一批星，方向投到单位球面——不是银道系
+// 整体分布，是随飞船位置动态更新的"附近"。全量扫描 N 颗星（数千量级，纯
+// 数值比较）很便宜，但没必要每帧都做，挪动够远才重新采样一次。
+const NAV_NEARBY = 160;
+const NAV_NEARBY_REFRESH_DIST = 30 * SCENE_SCALE;
+const navNearbyGeom = new THREE.BufferGeometry();
+navNearbyGeom.setAttribute("position",
+  new THREE.BufferAttribute(new Float32Array(NAV_NEARBY * 3), 3));
+navNearbyGeom.setDrawRange(0, 0);
+navRoot.add(new THREE.Points(navNearbyGeom, new THREE.PointsMaterial(
+  { color: 0xcfe0f2, size: 1.4, sizeAttenuation: false,
+    transparent: true, opacity: 0.55, depthWrite: false })));
+const navNearbyOrder = Array.from({ length: N }, (_, i) => i);
+const navNearbyD2 = new Float32Array(N);
+const navNearbyAt = new THREE.Vector3(Infinity, Infinity, Infinity);
 
-// 到目标的金色指向线：选中时从球心指向该星方向
+function refreshNavNearby() {
+  const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+  for (let i = 0; i < N; i++) {
+    const dx = positions[i * 3] - cx, dy = positions[i * 3 + 1] - cy, dz = positions[i * 3 + 2] - cz;
+    navNearbyD2[i] = dx * dx + dy * dy + dz * dz;
+  }
+  navNearbyOrder.sort((a, b) => navNearbyD2[a] - navNearbyD2[b]);
+  const pos = navNearbyGeom.getAttribute("position");
+  const k = Math.min(NAV_NEARBY, N);
+  for (let j = 0; j < k; j++) {
+    const i = navNearbyOrder[j];
+    const dx = positions[i * 3] - cx, dy = positions[i * 3 + 1] - cy, dz = positions[i * 3 + 2] - cz;
+    const l = Math.hypot(dx, dy, dz) || 1e-4;
+    pos.setXYZ(j, (dx / l) * NAV_R * 0.92, (dy / l) * NAV_R * 0.92, (dz / l) * NAV_R * 0.92);
+  }
+  navNearbyGeom.setDrawRange(0, k);
+  pos.needsUpdate = true;
+  navNearbyAt.set(cx, cy, cz);
+}
+
+// 到目标恒星的金色虚线：选中时从球心指向该星方向
 const navTgtGeom = new THREE.BufferGeometry();
 navTgtGeom.setAttribute("position",
   new THREE.BufferAttribute(new Float32Array(6), 3));
-const navTgt = new THREE.Line(navTgtGeom, new THREE.LineBasicMaterial(
-  { color: 0xf2c84b, transparent: true, opacity: 0.9 }));
+const navTgt = new THREE.Line(navTgtGeom, new THREE.LineDashedMaterial(
+  { color: 0xf2c84b, transparent: true, opacity: 0.9, dashSize: 0.05, gapSize: 0.035 }));
 navTgt.layers.set(1);
 navTgt.visible = false;
 navRoot.add(navTgt);
 
+// 规划路径：辅助驾驶进行中时，把各航段终点的实际机位（用 stateCamPos 从
+// theta/phi/radius/target 反算——瞄准段的 target 是"看向"的星不是机位本身）
+// 连成虚线折线，方向都从当前机位算，与目标虚线区分用更淡的暖色
+const NAV_PATH_MAX = 8;
+const navPathGeom = new THREE.BufferGeometry();
+navPathGeom.setAttribute("position",
+  new THREE.BufferAttribute(new Float32Array(NAV_PATH_MAX * 3), 3));
+navPathGeom.setDrawRange(0, 0);
+const navPath = new THREE.Line(navPathGeom, new THREE.LineDashedMaterial(
+  { color: 0xffb37a, transparent: true, opacity: 0.55, dashSize: 0.035, gapSize: 0.03 }));
+navPath.layers.set(1);
+navPath.visible = false;
+navRoot.add(navPath);
+
 const navDir = new THREE.Vector3();
+const navWaypoint = new THREE.Vector3();
 let navW = 0, navH = 0;
 
 function renderNavBall() {
@@ -2265,6 +2321,9 @@ function renderNavBall() {
     navRenderer.setSize(w, h, false);
   }
   navRoot.quaternion.copy(camera.quaternion).invert();
+  if (camera.position.distanceToSquared(navNearbyAt) > NAV_NEARBY_REFRESH_DIST * NAV_NEARBY_REFRESH_DIST) {
+    refreshNavNearby();
+  }
   if (selected >= 0) {
     navDir.set(positions[selected * 3], positions[selected * 3 + 1],
                positions[selected * 3 + 2]).sub(camera.position);
@@ -2275,9 +2334,27 @@ function renderNavBall() {
       const a = navTgtGeom.getAttribute("position");
       a.setXYZ(1, navDir.x, navDir.y, navDir.z);
       a.needsUpdate = true;
+      navTgt.computeLineDistances();
     }
   } else {
     navTgt.visible = false;
+  }
+  if ((auto.on || auto.assist) && auto.segs && auto.segs.length) {
+    const pos = navPathGeom.getAttribute("position");
+    pos.setXYZ(0, 0, 0, 0);
+    const k = Math.min(auto.segs.length, NAV_PATH_MAX - 1);
+    for (let j = 0; j < k; j++) {
+      navWaypoint.copy(stateCamPos(auto.segs[j].to)).sub(camera.position);
+      const l = navWaypoint.length();
+      if (l > 1e-4) navWaypoint.multiplyScalar(NAV_R / l);
+      pos.setXYZ(j + 1, navWaypoint.x, navWaypoint.y, navWaypoint.z);
+    }
+    navPathGeom.setDrawRange(0, k + 1);
+    pos.needsUpdate = true;
+    navPath.computeLineDistances();
+    navPath.visible = k > 0;
+  } else {
+    navPath.visible = false;
   }
   navRenderer.clear(true, true, true);
   navRenderer.render(navScene, navCam);
@@ -2296,7 +2373,7 @@ function openHelp() {
   helpModal.hidden = false;
   held.clear();
   throttle.gear = 0; throttle.v = 0;
-  midHeld = false; steerCenter = false; clearTimeout(midTimer);
+  midRelease(midMouse); midRelease(midTouch);
 }
 function closeHelp() { helpModal.hidden = true; }
 
