@@ -259,14 +259,17 @@ for (const j of joys) {
 function joyStep(dt) {
   if (!joyActive) return;
   const [jl, jr] = joys;
+  // 握杆期间新启动的辅助驾驶也要被打断，否则杆量每帧被段插值覆盖
+  if (jl.vx || jl.vy || jr.vx || jr.vy) setAuto(false);
   if (jl.vx || jl.vy) {
     const step = cam.radius * 0.9 * dt;
     panScreen(jl.vx * step, -jl.vy * step);
   }
   if (jr.vx || jr.vy) {
-    cam.goalTheta -= jr.vx * dt * 1.1;
+    // 满偏速率压在手动档 RCS 上限（0.55*1.5）之内，goal 不甩开引擎
+    cam.goalTheta -= jr.vx * dt * 0.8;
     cam.goalPhi = THREE.MathUtils.clamp(
-      cam.goalPhi - jr.vy * dt * 1.1, 0.04, Math.PI - 0.04);
+      cam.goalPhi - jr.vy * dt * 0.8, 0.04, Math.PI - 0.04);
   }
 }
 
@@ -644,6 +647,7 @@ function select(i) {
     clearLinks();
     linkLayer.classList.remove("sel");
     flare.needsUpdate = true; edgeGeom.getAttribute("alpha").needsUpdate = true;
+    requestAnimationFrame(syncSkew);     // 曲目行隐藏后左板高度骤变
     return;
   }
 
@@ -696,23 +700,13 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
    高度差按各自实测宽高比换算；rotateY 之后 getBoundingClientRect
    是投影后的包围盒，必须用 offsetWidth/offsetHeight */
 const PANEL_SLOPE = 0.14;                                    // tan(倾角)
-// 与竖屏叠放布局的媒体查询一致
-const panelStacked = matchMedia("(max-width: 900px) and (orientation: portrait)");
 
 function syncSkew() {
   const root = document.documentElement.style;
-  for (const [el, skewVar, tiltVar, sign] of [
-    [panelLeft, "--skew-l", "--tilt-l", -1],
-    [panelRight, "--skew-r", "--tilt-r", 1],
+  for (const [el, skewVar, sign] of [
+    [panelLeft, "--skew-l", -1],
+    [panelRight, "--skew-r", 1],
   ]) {
-    if (panelStacked.matches) {
-      // 叠放布局：内联 clip-path 会盖过媒体查询的 clip-path: none，须清空
-      el.style.clipPath = "";
-      root.setProperty(skewVar, "0deg");
-      root.setProperty(tiltVar, "0deg");
-      continue;
-    }
-    root.removeProperty(tiltVar);
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) continue;
     // 高度不足以达到统一斜率时收在 45%，内容倾角跟随实际边缘
@@ -730,10 +724,17 @@ function syncSkew() {
   }
 }
 
+// 触屏窄横屏时槽位弧向内收，给两侧边缘的摇杆让位
+function targetArcR() {
+  const base = innerWidth * 0.25;
+  return coarse && innerWidth <= 1100 && innerWidth > innerHeight
+    ? Math.min(base, Math.max(innerWidth / 2 - 250, 80)) : base;
+}
+
 // 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
 function layoutTargets() {
   const cx = innerWidth / 2, cy = innerHeight / 2;
-  const R = innerWidth * 0.25 + 6;   // 贴在弧的外侧
+  const R = targetArcR() + 6;   // 贴在弧的外侧
   const half = TARGET_MAX / 2;
   targetSlots.forEach((el, k) => {
     const j = k % half;
@@ -1001,7 +1002,9 @@ function segDur(a, b) {
   const t = Math.max(ang / ENGINE.rcs.angMax,
                      rad / ENGINE.main.radMax,
                      pan / ENGINE.rcs.panMax);
-  return t * 1.35 + 0.5;   // 常数项留给加减速斜坡
+  // 倍率须盖过缓动的峰值斜率（easeIn/Out 端点 2、easeSoft 中点 1.875），
+  // 常数项留给加减速斜坡
+  return t * 2.1 + 0.4;
 }
 
 // 一次机动拆成四段，对应真实的推进时序：
@@ -1022,8 +1025,10 @@ function flyTo(point, finalRadius, holdSec, arcTheta = 0) {
                    radius: Math.exp(lnA + (lnF - lnA) * split) };
   const arrive = { ...aim, target: aim.target.clone(),
                    theta: aim.theta + arcTheta, radius: finalRadius };
+  // 入轨漂移量受停留时长与 RCS 角速度上限约束，停留短就少转一点
   const orbit = { ...arrive, target: arrive.target.clone(),
-                  theta: arrive.theta + rnd(0.15, 0.35) };
+                  theta: arrive.theta
+                    + Math.min(rnd(0.15, 0.35), holdSec * ENGINE.rcs.angMax * 0.6) };
 
   const segs = [
     { to: aim,    dur: segDur(from, aim),      ease: easeSoft, engine: "rcs" },
@@ -1090,14 +1095,18 @@ function nearestStarTo(pos) {
   return best;
 }
 
-// 纯喷口翻转：机位不动，视线甩开
+// 纯喷口翻转：机位保持，把视线方向甩向另一边。
+// 只改 theta 会变成绕注视点的轨道横扫，必须用 aimFrom 反解换注视点。
+const FLIP_UP = new THREE.Vector3(0, 1, 0);
 function wanderFlip() {
   const from = snapshotCam();
-  const to = {
-    target: from.target.clone(), radius: from.radius,
-    theta: from.theta + (Math.random() < 0.5 ? -1 : 1) * rnd(0.6, 1.6),
-    phi: THREE.MathUtils.clamp(from.phi + rnd(-0.4, 0.4), 0.3, Math.PI - 0.3),
-  };
+  const pos = stateCamPos(from);
+  const dir = from.target.clone().sub(pos).normalize();
+  dir.applyAxisAngle(FLIP_UP, (Math.random() < 0.5 ? -1 : 1) * rnd(0.6, 1.6));
+  dir.y = THREE.MathUtils.clamp(dir.y + rnd(-0.35, 0.35), -0.85, 0.85);
+  const to = aimFrom(pos,
+    pos.clone().addScaledVector(dir.normalize(), rnd(20, 60)), from.theta);
+  to.phi = THREE.MathUtils.clamp(to.phi, 0.3, Math.PI - 0.3);
   return [{ to, dur: segDur(from, to), ease: easeSoft, engine: "rcs" }];
 }
 
@@ -1181,7 +1190,9 @@ function stepAuto() {
   const f = auto.from, t = seg.to;
   cam.goalTheta = f.theta + (t.theta - f.theta) * u;
   cam.goalPhi = f.phi + (t.phi - f.phi) * u;
-  cam.goalRadius = f.radius + (t.radius - f.radius) * u;
+  // 引擎上限作用在 ln 半径上，goal 也按 ln 插值，两边速率才对得上
+  cam.goalRadius = Math.exp(
+    Math.log(f.radius) + (Math.log(t.radius) - Math.log(f.radius)) * u);
   cam.goalTarget.lerpVectors(f.target, t.target, u);
 
   if (raw >= 1) {
@@ -1215,14 +1226,19 @@ function setAuto(on, mode = "cruise") {
   }
 }
 
-autoBtn.addEventListener("click", () => setAuto(!auto.on));
+// 与漫游互斥切换：漫游中点巡游=切入巡游，而不是全部退出
+autoBtn.addEventListener("click", () =>
+  setAuto(!(auto.on && auto.mode === "cruise"), "cruise"));
 wanderBtn.addEventListener("click", () =>
   setAuto(!(auto.on && auto.mode === "wander"), "wander"));
 // 任何主动操作都退出巡游
 for (const ev of ["pointerdown", "wheel"]) {
   canvas.addEventListener(ev, () => setAuto(false), { passive: true });
 }
-addEventListener("keydown", (e) => { if (PAN_KEYS[e.code]) setAuto(false); });
+addEventListener("keydown", (e) => {
+  if (e.target instanceof HTMLInputElement) return;   // 搜索框里打 wasd 不算飞行操作
+  if (PAN_KEYS[e.code]) setAuto(false);
+});
 
 /* ── 搜索 ───────────────────────────────────────────── */
 function escapeHtml(s) {
@@ -1388,7 +1404,7 @@ function layoutHud() {
   elSpeed.style.top = `${(cy + rSpeed + 12).toFixed(0)}px`;
 
   // 攻击指示器的内圈弧，贴在槽位弧的内侧
-  const rt = innerWidth * 0.25;
+  const rt = targetArcR();
   const half = TARGET_SPREAD / 2;
   arcTgtL.setAttribute("d", arcPath(cx, innerHeight / 2, rt, 180 - half, 180 + half));
   arcTgtR.setAttribute("d", arcPath(cx, innerHeight / 2, rt, -half, half));
@@ -1444,6 +1460,7 @@ function refreshBgmName() {
   const name = bgm.paused ? "—" : (BGM_TITLE[f] || "—");
   elBgmName.textContent = name;
   document.body.classList.toggle("bgm-on", !bgm.paused);
+  requestAnimationFrame(syncSkew);   // 「正在播放」行的增删会改左板高度
 }
 bgm.addEventListener("loadedmetadata", refreshBgmName);
 bgm.addEventListener("play", refreshBgmName);

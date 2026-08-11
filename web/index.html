@@ -316,7 +316,8 @@
   body.auto #auto-btn::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
   body.wander #wander-btn { color: var(--accent); border-color: rgba(242, 200, 75, .6); }
   body.wander #wander-btn::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  body.auto #search-wrap, body.auto #footer { opacity: 0; pointer-events: none; }
+  body.auto #search-wrap, body.auto #footer,
+  body.wander #search-wrap, body.wander #footer { opacity: 0; pointer-events: none; }
   #search-wrap, #footer { transition: opacity .4s ease; }
 
   #tooltip {
@@ -378,8 +379,8 @@
   #load-pct { font-size: .62rem; letter-spacing: .14em;
               font-variant-numeric: tabular-nums; color: var(--accent); }
 
-  /* 竖屏手机：不再退化布局，全屏提示旋转 */
-  @media (max-width: 900px) and (orientation: portrait) {
+  /* 竖屏手机：不再退化布局，全屏提示旋转（仅触屏；桌面窄高窗口不拦） */
+  @media (max-width: 900px) and (orientation: portrait) and (pointer: coarse) {
     #rotate-overlay { display: grid; }
   }
 
@@ -434,6 +435,8 @@
     .joy-nub { width: 2.2rem; height: 2.2rem; }
     #joy-left { left: .8rem; }
     #joy-right { right: .8rem; }
+    /* 槽位随 JS 收窄的弧同步缩短，避开摇杆 */
+    .target { width: 8rem; }
   }
 </style>
 </head>
