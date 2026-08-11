@@ -1229,11 +1229,7 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   el.className = `target ${k < TARGET_MAX / 2 ? "left" : "right"}`;
   el.innerHTML = '<span class="t"></span><span class="w"></span>';
   el.addEventListener("click", () => {
-    if (!el.dataset.i) return;
-    // 槽位在 canvas 之外，收不到那条「按下即退出自动」的监听，得自己退：
-    // 不退的话自动模式还在跑，几秒后就把用户刚点的目标换掉
-    setAuto(false);
-    select(Number(el.dataset.i));
+    if (el.dataset.i) select(Number(el.dataset.i));
   });
   elTargets.appendChild(el);
   return el;
@@ -1356,7 +1352,7 @@ function confirmPending() {
   const i = el && el.dataset.i ? Number(el.dataset.i) : -1;
   el.classList.remove("pending");
   pendingSlot = -1;
-  if (i >= 0) { setAuto(false); select(i); }
+  if (i >= 0) select(i);
   return true;
 }
 function cycleTarget(dir) {
@@ -1365,7 +1361,6 @@ function cycleTarget(dir) {
     .filter((i) => i >= 0);
   if (!filled.length) return;
   const idx = filled.indexOf(selected);
-  setAuto(false);   // 同上：主动挑目标就意味着接管
   select(filled[idx < 0 ? 0 : (idx + dir + filled.length) % filled.length]);
 }
 
@@ -2325,12 +2320,7 @@ function setAuto(on, mode = "cruise") {
     // 自动模式下姿态输入被逐帧清零，"持续转向银心"这个标志既不会生效也
     // 不会自清，留着会在用户切回手动的第一帧突然接管操纵
     steerCenterPersist = false;
-    if (mode === "wander") {
-      // 漫游只做静默锁定。从巡游/手动带着播放器板切进来时先收起它——
-      // 否则要等第一次扫描落地才收，附近没有顺路星体时能挂上好几秒
-      if (selected >= 0) select(selected, true);
-      roamStart();
-    }
+    if (mode === "wander") roamStart();
     bgm.volume = 0.55;
     if (!bgm.src) loadBgm(0, false);
     bgm.play().catch(() => {});    // 自动播放被拦就静默跳过
@@ -2434,7 +2424,6 @@ function moveCursor(step) {
 }
 
 function chooseHit(i) {
-  setAuto(false);   // 搜到并点开一首曲目也是接管，否则自动模式转头就把它换掉
   select(i);
   elResults.classList.remove("on");
   elSearch.blur();
@@ -2993,6 +2982,5 @@ if (!helpSeen) {
 } else {
   throttle.gear = INIT_GEAR;
 }
-
 
 
