@@ -17,6 +17,8 @@
     --ring-r: 19px;
     --panel-l: 22rem;
     --panel-r: 20rem;
+    --tilt-l: 8.5deg;
+    --tilt-r: -8.5deg;
   }
 
   * { box-sizing: border-box; }
@@ -59,11 +61,11 @@
 
   /* ── 中央指示器：上下各 120° 的蓝色半透明圆 ─────────── */
   #reticle {
-    position: fixed; left: 50%; top: 50%; width: 30px; height: 30px;
+    position: fixed; left: 50%; top: 50%; width: 15px; height: 15px;
     transform: translate(-50%, -50%);
     z-index: 4; pointer-events: none;
   }
-  #reticle path { fill: none; stroke: var(--reticle); stroke-width: 5;
+  #reticle path { fill: none; stroke: var(--reticle); stroke-width: 20;
                   opacity: .42; stroke-linecap: round; }
   #reticle circle { fill: var(--reticle); opacity: .55; }
 
@@ -88,12 +90,17 @@
     display: flex; flex-direction: column; align-items: center; gap: .26rem;
     pointer-events: none; text-align: center;
   }
-  #hud-icons { display: flex; gap: .7rem; }
-  .ic { width: 1.05rem; height: 1.05rem; opacity: .22; transition: opacity .2s, filter .2s; }
-  .ic svg { width: 100%; height: 100%; fill: none; stroke: var(--accent);
-            stroke-width: 1.2; stroke-linejoin: round; }
+  #hud-icons { display: flex; gap: .8rem; }
+  .ic { display: flex; flex-direction: column; align-items: center; gap: .14rem;
+        opacity: .22; transition: opacity .2s, filter .2s; }
+  .ic svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: var(--accent);
+            stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .ic .fl { fill: var(--accent); stroke: none; }
+  .ic .lb { font-style: normal; font-size: .5rem; line-height: 1;
+            letter-spacing: .08em; color: var(--accent); }
   .ic.on { opacity: 1; filter: drop-shadow(0 0 5px rgba(242,200,75,.7)); }
   #ic-rev.on svg { stroke: #ff9a6b; }
+  #ic-rev.on .lb { color: #ff9a6b; }
   #ic-rev.on { filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
 
   /* 速度读数嵌在两条弧之间 */
@@ -128,17 +135,25 @@
     vector-effect: non-scaling-stroke;
   }
 
+  /* 外侧边全高，内侧边贴上缘收短；底边向屏幕中心上扫约 22°。
+     下方楔形会侵入内容区，底部留白按最大侵入量给足 */
   #panel-left {
     left: 8vw; width: var(--panel-r);
-    clip-path: polygon(0 8%, 100% 0, 100% 92%, 0 100%);
-    padding: 1.3rem 1.5rem 1.4rem .9rem;
+    clip-path: polygon(0 0, 100% 6%, 100% 52%, 0 100%);
+    padding: 1.3rem 1.4rem 8.2rem 1.1rem;
     display: flex; flex-direction: column; gap: .32rem;
   }
   #panel-right {
     right: 8vw; width: var(--panel-l);
-    clip-path: polygon(0 0, 100% 8%, 100% 100%, 0 92%);
-    padding: .8rem .8rem 1.1rem 1.4rem;
+    clip-path: polygon(0 6%, 100% 0, 100% 100%, 0 52%);
+    padding: 1.4rem 1rem 8.9rem 1.3rem;
     min-height: 14rem;
+  }
+  @media (orientation: landscape) {
+    #panel-left { transform: perspective(1100px) rotateY(var(--tilt-l));
+                  transform-origin: left center; }
+    #panel-right { transform: perspective(1100px) rotateY(var(--tilt-r));
+                   transform-origin: right center; }
   }
 
   #cover {
@@ -280,6 +295,21 @@
   #opt-btn { padding: .4rem .9rem; }
   #opt-btn.on, #search-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
 
+  /* 全屏按钮：不依赖同族共享选择器 */
+  #fs-btn {
+    display: flex; align-items: center; padding: .4rem .62rem;
+    background: rgba(8, 14, 26, .7); color: var(--text-dim);
+    border: 1px solid rgba(242, 200, 75, .26); border-radius: 999px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    font: inherit; cursor: pointer;
+    transition: color .2s, border-color .2s;
+  }
+  #fs-btn[hidden] { display: none; }
+  #fs-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
+  #fs-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
+  #fs-btn .fs-out, #fs-btn.on .fs-in { display: none; }
+  #fs-btn.on .fs-out { display: inline; }
+
   #opts {
     display: none; flex-direction: column; gap: .34rem;
     padding: .6rem .8rem;
@@ -368,9 +398,9 @@
 
   @media (max-width: 1100px) and (orientation: landscape) {
     :root { --panel-l: 15rem; --panel-r: 13rem; }
-    #panel-left { left: 3vw; }
-    #panel-right { right: 3vw; }
-    #reticle { width: 100px; height: 100px; }
+    #panel-left { left: 3vw; padding-bottom: 5.2rem; }
+    #panel-right { right: 3vw; padding-bottom: 6rem; }
+    #reticle { width: 50px; height: 50px; }
     #footer { display: none; }
   }
 
@@ -399,7 +429,7 @@
   <path d="M64.28,129.15 A56 56 0 0 1 18.85,83.72"/>
   <path d="M18.85,64.28 A56 56 0 0 1 64.28,18.85"/>
   <path d="M83.72,18.85 A56 56 0 0 1 129.15,64.28"/>
-  <circle cx="74" cy="74" r="1.6"/>
+  <circle cx="74" cy="74" r="3"/>
 </svg>
 
 <svg id="link-layer" aria-hidden="true">
@@ -423,24 +453,39 @@
 <div id="hud-labels">
   <div id="hud-icons">
     <span class="ic" id="ic-main" title="主推进引擎">
-      <svg viewBox="0 0 16 16"><path d="M8 1.5 11.5 9H4.5z"/><path d="M5.5 10.5h5l-2.5 4z"/></svg></span>
-    <span class="ic" id="ic-rcs" title="矢量喷口">
-      <svg viewBox="0 0 16 16"><path d="M2.5 5.5h4v-2l3 3-3 3v-2h-4z"/>
-        <path d="M13.5 10.5h-4v2l-3-3 3-3v2h4z"/></svg></span>
-    <span class="ic" id="ic-auto" title="驾驶模式">
-      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11M2.5 8h11"/></svg></span>
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2c2.7 2.3 3.5 5.5 3.5 8.6V14h-7v-3.4C8.5 7.5 9.3 4.3 12 2z"/>
+        <path d="M8.5 10.6 6 13.8V16h2.5M15.5 10.6l2.5 3.2V16h-2.5"/>
+        <path d="M12 16.6V21M8.7 16.6 7 20.2M15.3 16.6 17 20.2"/></svg>
+      <i class="lb">主推</i></span>
+    <span class="ic" id="ic-rcs" title="姿态喷口">
+      <svg viewBox="0 0 24 24">
+        <rect x="8.6" y="8.6" width="6.8" height="6.8"/>
+        <path d="M9.4 5.4 12 2.8l2.6 2.6M9.4 18.6 12 21.2l2.6-2.6"/>
+        <path d="M5.4 9.4 2.8 12l2.6 2.6M18.6 9.4 21.2 12l-2.6 2.6"/></svg>
+      <i class="lb">姿态</i></span>
+    <span class="ic" id="ic-auto" title="自动驾驶">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.6"/>
+        <path class="fl" d="M16 8 13.4 13.4 8 16l2.6-5.4z"/></svg>
+      <i class="lb">自动</i></span>
     <span class="ic" id="ic-lock" title="目标锁定">
-      <svg viewBox="0 0 16 16"><path d="M3 5.5V3h2.5M13 5.5V3h-2.5M3 10.5V13h2.5M13 10.5V13h-2.5"/>
-        <circle cx="8" cy="8" r="1.6"/></svg></span>
-    <span class="ic" id="ic-rev" title="倒车">
-      <svg viewBox="0 0 16 16"><path d="M8 14.5 4.5 7h7z"/><path d="M5.5 5.5h5l-2.5-4z"/></svg></span>
+      <svg viewBox="0 0 24 24">
+        <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/>
+        <circle class="fl" cx="12" cy="12" r="2.7"/></svg>
+      <i class="lb">锁定</i></span>
+    <span class="ic" id="ic-rev" title="反向推进">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2.6v7.6M8.4 6.6l3.6 3.6 3.6-3.6"/>
+        <path d="M12 13.4 16.6 21H7.4z"/></svg>
+      <i class="lb">反推</i></span>
   </div>
 </div>
 <div id="speed-readout">0.0 <em>ly/s</em></div>
 
 <div id="panel-left" class="hud-panel on">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,8 100,0 100,92 0,100"/>
+    <polygon points="0,0 100,6 100,52 0,100"/>
   </svg>
   <div class="track-only"><div class="field"><span>UP 主</span><b id="f-author"></b></div></div>
   <div class="track-only"><div class="field"><span>投稿</span><b id="f-date"></b></div></div>
@@ -454,7 +499,7 @@
 
 <div id="panel-right" class="hud-panel">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,0 100,8 100,100 0,92"/>
+    <polygon points="0,6 100,0 100,100 0,52"/>
   </svg>
   <div id="cover">
     <img class="glyph" src="./icon.svg" alt="" width="44" height="44">
@@ -492,6 +537,13 @@
         <div id="results"></div>
       </div>
     </div>
+    <button id="fs-btn" type="button" aria-label="全屏" hidden>
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
+           stroke="currentColor" stroke-width="1.5">
+        <path class="fs-in" d="M6 2.5H2.5V6M10 2.5h3.5V6M13.5 10v3.5H10M2.5 10v3.5H6"/>
+        <path class="fs-out" d="M6 2.5V6H2.5M10 2.5V6h3.5M13.5 10H10v3.5M2.5 10H6v3.5"/>
+      </svg>
+    </button>
   </div>
   <div id="opts">
     <label><input type="checkbox" id="o-reticle" checked>中央指示器</label>

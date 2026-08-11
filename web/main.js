@@ -620,16 +620,42 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-// 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
-// 面板是平行四边形，上下边斜率都是 8% 高 / 宽；倾角按实测尺寸算才对得齐
+/* 面板剪影：顶边微斜、底边向屏幕中心上扫，两个角度恒定，与面板尺寸无关。
+   剪影和描边多边形共用同一组顶点；空板高度不足时内侧边收缩成尖角。 */
+const PANEL_TOP_DEG = 3.2;
+const PANEL_BOT_DEG = 22;
+const panelPortrait = matchMedia("(max-width: 900px) and (orientation: portrait)");
+
 function syncSkew() {
-  for (const [el, name, sign] of [[panelLeft, "--skew-l", -1], [panelRight, "--skew-r", 1]]) {
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) continue;
-    const deg = (Math.atan2(0.08 * r.height, r.width) * 180) / Math.PI;
-    document.documentElement.style.setProperty(name, `${(sign * deg).toFixed(2)}deg`);
+  for (const [el, innerRight] of [[panelLeft, true], [panelRight, false]]) {
+    // 竖屏走矩形卡片布局，交还给样式表
+    if (panelPortrait.matches) { el.style.clipPath = ""; continue; }
+    // rotateY 下 getBoundingClientRect 是投影包围盒，必须用 offset 尺寸
+    const w = el.offsetWidth, h = el.offsetHeight;
+    if (!w || !h) continue;
+    const drop = Math.min(w * Math.tan((PANEL_TOP_DEG * Math.PI) / 180), h);
+    const sweep = w * Math.tan((PANEL_BOT_DEG * Math.PI) / 180);
+    const yB = Math.max(h - sweep, drop);
+    const pts = innerRight
+      ? [[0, 0], [w, drop], [w, yB], [0, h]]
+      : [[0, drop], [w, 0], [w, h], [0, yB]];
+    el.style.clipPath =
+      `polygon(${pts.map(([x, y]) => `${x}px ${y.toFixed(1)}px`).join(", ")})`;
+    const edge = el.querySelector(".panel-edge");
+    edge.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    edge.firstElementChild.setAttribute("points",
+      pts.map(([x, y]) => `${x},${y.toFixed(1)}`).join(" "));
   }
+  // 内容保持水平排版，变量留作内容倾角接口
+  document.documentElement.style.setProperty("--skew-l", "0deg");
+  document.documentElement.style.setProperty("--skew-r", "0deg");
 }
+// 面板高度随内容增减，剪影要跟着重算
+const panelRO = new ResizeObserver(() => syncSkew());
+panelRO.observe(panelLeft);
+panelRO.observe(panelRight);
+
+// 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
 
 function layoutTargets() {
   const cx = innerWidth / 2, cy = innerHeight / 2;
@@ -1296,3 +1322,21 @@ function frame(now) {
 
 document.getElementById("loading").classList.add("done");
 requestAnimationFrame(frame);
+
+/* ── 全屏 ───────────────────────────────────────────── */
+const fsBtn = document.getElementById("fs-btn");
+if (document.documentElement.requestFullscreen) {
+  fsBtn.hidden = false;
+  fsBtn.addEventListener("click", () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      document.documentElement.requestFullscreen()
+        .then(() => screen.orientation?.lock?.("landscape")?.catch(() => {}))
+        .catch(() => {});
+    }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    fsBtn.classList.toggle("on", !!document.fullscreenElement);
+  });
+}
