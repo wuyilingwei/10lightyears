@@ -15,8 +15,8 @@
     --text: #dfe8f2;
     --text-dim: #8497ad;
     --ring-r: 15px;
-    --panel-l: 22rem;
-    --panel-r: 20rem;
+    --panel-l: 26rem;
+    --panel-r: 24rem;
     /* rotateY 正角把左缘转近观察者：左板取正让内(右)缘转远，
        透视上内侧显得更窄更远，配合剪影的「内窄上提」 */
     --tilt-l: 8.5deg;
@@ -120,7 +120,7 @@
   }
   #speed-readout em { font-style: normal; color: var(--text-dim); font-size: .5rem; }
 
-  /* ── 底部左右信息卡：梯形，外侧高、内侧矮 ───────────── */
+  /* ── 底部左右信息卡：梯形，上下边同向朝中心收拢，外侧边高、内侧带短 ── */
   .hud-panel {
     position: fixed; bottom: 1.2rem; z-index: 6;
     background: linear-gradient(150deg, rgba(9, 15, 28, .62), rgba(7, 11, 21, .48));
@@ -146,18 +146,18 @@
     vector-effect: non-scaling-stroke;
   }
 
-  /* 外侧边全高，内侧边贴上缘收短；底边向屏幕中心上扫约 22°。
-     下方楔形会侵入内容区，底部留白按最大侵入量给足 */
+  /* 顶边向中心上扬约 4.5°、底边向中心上扫约 22°，内侧边贴上缘收短。
+     上楔侵入外侧顶部、下楔侵入内侧底部，留白按最大侵入量给足 */
   #panel-left {
     left: 8vw; width: var(--panel-r);
-    clip-path: polygon(0 0, 100% 6%, 100% 52%, 0 100%);
-    padding: 1.3rem 1.4rem 8.2rem 1.1rem;
+    clip-path: polygon(0 8%, 100% 0, 100% 52%, 0 100%);
+    padding: 1.7rem 1.4rem 8.6rem 1.1rem;
     display: flex; flex-direction: column; gap: .32rem;
   }
   #panel-right {
     right: 8vw; width: var(--panel-l);
-    clip-path: polygon(0 6%, 100% 0, 100% 100%, 0 52%);
-    padding: 1.4rem 1rem 8.9rem 1.3rem;
+    clip-path: polygon(0 0, 100% 8%, 100% 100%, 0 52%);
+    padding: 1.8rem 1rem 9.3rem 1.3rem;
     min-height: 14rem;
   }
   @media (orientation: landscape) {
@@ -202,14 +202,14 @@
     font-size: .6rem; line-height: 1.6;
   }
   .field span { color: var(--text-dim); letter-spacing: .13em; flex: none; }
+  /* 长串（复合光谱、UP 主名）禁止省略号折叠，一律换行完整展示 */
   .field b {
     color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums;
-    text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-align: right; min-width: 0;
+    white-space: normal; word-break: break-word; line-height: 1.35;
   }
   .field.hot b { color: var(--accent); }
   .field.warm b { color: var(--accent-warm); }
-  /* 光谱串可能很长（如复合型），禁止省略号折叠，允许换行 */
-  #f-sp { white-space: normal; word-break: break-all; line-height: 1.35; }
   .track-only { display: none; }
   body.has-sel .track-only { display: block; }
   .field.bgm { display: none; }
@@ -513,7 +513,7 @@
   }
 
   @media (max-width: 1100px) and (orientation: landscape) {
-    :root { --panel-l: 15rem; --panel-r: 13rem; }
+    :root { --panel-l: 17rem; --panel-r: 15rem; }
     #panel-left { left: 3vw; padding-bottom: 5.2rem; }
     #panel-right { right: 3vw; min-height: 11rem; padding-bottom: 6rem; }
     #reticle { width: 50px; height: 50px; }
@@ -526,7 +526,7 @@
 
   /* 伪横屏的窄横屏等价：旋转后的横向宽度即物理高度 */
   @media (max-height: 1100px) {
-    body.fake-land { --panel-l: 15rem; --panel-r: 13rem; }
+    body.fake-land { --panel-l: 17rem; --panel-r: 15rem; }
     body.fake-land #panel-left { left: 3vh; padding-bottom: 5.2rem; }
     body.fake-land #panel-right { right: 3vh; min-height: 11rem; padding-bottom: 6rem; }
     body.fake-land #reticle { width: 50px; height: 50px; }
@@ -654,7 +654,7 @@
 
 <div id="panel-left" class="hud-panel on">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,0 100,6 100,52 0,100"/>
+    <polygon points="0,8 100,0 100,52 0,100"/>
   </svg>
   <div class="track-only"><div class="field"><span>UP 主</span><b id="f-author"></b></div></div>
   <div class="track-only"><div class="field"><span>投稿</span><b id="f-date"></b></div></div>
@@ -668,7 +668,7 @@
 
 <div id="panel-right" class="hud-panel">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,6 100,0 100,100 0,52"/>
+    <polygon points="0,0 100,8 100,100 0,52"/>
   </svg>
   <div id="cover">
     <img class="glyph" src="./icon.svg" alt="" width="44" height="44">
