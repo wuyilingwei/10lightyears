@@ -553,7 +553,12 @@
     }
   }
 
-  @media (max-width: 1100px) and (orientation: landscape) {
+  /* 不限定 orientation：非触屏窄视口（比如把本站塞进一个窄 iframe/分栏）
+     宽高比往往是竖直的，但既不满足 landscape 也不满足伪横屏所需的
+     pointer:coarse，会跳过所有收紧规则——两侧面板停在桌面默认的
+     26rem/24rem + 8vw 起始位置，宽度不够时直接左右重叠、互相盖住内容
+     （含 #cover 播放器），这才是「iframe 嵌入不工作」在窄宽度下的真因 */
+  @media (max-width: 1100px) {
     :root { --panel-l: 17rem; --panel-r: 15rem; --reticle-scale: 2.6; }
     #panel-left { left: 3vw; }
     #panel-right { right: 3vw; min-height: 11rem; }
