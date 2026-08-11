@@ -68,11 +68,7 @@ const cam = {
   // 下限须留在固定逼近距离（8.12 ly ≈ 0.68 su）之下，否则辅助驾驶停稳后
   // 任意一次捏合缩放都会把半径钳向 minRadius，产生一次跳变式的镜头外甩
   minRadius: 0.5, maxRadius: 420,
-  roll: 0,   // 纯视觉滚转（rad），只改 up 向量，不进 goal 追赶体系
 };
-const camDir = new THREE.Vector3();
-const camRight = new THREE.Vector3();
-const camUp = new THREE.Vector3();
 
 /* 引擎绝对规格（场景单位 su，1 su = 12 ly）：矢量喷口（RCS）管转向与平移，
    主引擎管径向推进，前进与倒车上限不对称。手动与自动同一套引擎。 */
@@ -124,7 +120,9 @@ function approachRadial(cur, v, goal, dt) {
 }
 
 /* 双轨：自动驾驶的 goal 已按引擎时序生成，直接指数平滑跟随（τ≈0.1s），
-   重锚（target/radius 大跳）不会卡住追赶；手动才走引擎追赶。 */
+   重锚（target/radius 大跳）不会卡住追赶；手动才走引擎追赶。
+   手动模式的朝向由 attitudeStep 维护的机身基向量 bodyFwd/Right/Up 驱动
+   （见该函数注释），这里只需在手动分支里推进半径/平移，姿态已经就位。 */
 function applyCamera(dt) {
   if (auto.on || auto.assist) {
     const k = 1 - Math.pow(1e-4, dt);
@@ -140,12 +138,6 @@ function applyCamera(dt) {
     vel.r = (cam.radius - pr) / dt;
     vel.pan = 0;
   } else {
-    [cam.theta, vel.theta] = approach(cam.theta, vel.theta, cam.goalTheta,
-      ENGINE.rcs.angAccel * MANUAL_BOOST, ENGINE.rcs.angMax * MANUAL_BOOST, dt);
-    [cam.phi, vel.phi] = approach(cam.phi, vel.phi, cam.goalPhi,
-      ENGINE.rcs.angAccel * MANUAL_BOOST, ENGINE.rcs.angMax * MANUAL_BOOST, dt);
-    cam.phi = THREE.MathUtils.clamp(cam.phi, 0.04, Math.PI - 0.04);
-
     [cam.radius, vel.r] = approachRadial(cam.radius, vel.r, cam.goalRadius, dt);
 
     // 平移在绝对 su 空间限速
@@ -167,17 +159,9 @@ function applyCamera(dt) {
     cam.target.y + cam.radius * Math.cos(cam.phi),
     cam.target.z + cam.radius * sp * Math.cos(cam.theta),
   );
-  // 滚转是纯视觉的机身绕视轴转动，不碰 theta/phi/target：
-  // 先按世界系求出中性的右/上基向量，再绕视线把 up 转过 cam.roll
-  camDir.copy(cam.target).sub(camera.position).normalize();
-  if (Math.abs(camDir.y) < 0.999) {
-    camRight.crossVectors(camDir, FLIP_UP).normalize();
-  } else {
-    camRight.copy(FLIP_RIGHT);
-  }
-  camUp.crossVectors(camRight, camDir).normalize();
-  camera.up.copy(camUp).multiplyScalar(Math.cos(cam.roll))
-    .addScaledVector(camRight, Math.sin(cam.roll));
+  // 自动模式恒用世界 up；手动模式用机身持久 up（含滚转历史），
+  // lookAt 只是借用它稳定地把 up 正交化进相机四元数，朝向仍由 position 决定
+  camera.up.copy(auto.on || auto.assist ? FLIP_UP : bodyUp);
   camera.lookAt(cam.target);
 }
 
@@ -281,26 +265,26 @@ function steerCenterStep() {
   const dist = attLook.length();
   if (dist < 1e-3) return;
   attLook.divideScalar(dist);
-  const right = attLook.dot(camRight), up = attLook.dot(camUp);
+  const right = attLook.dot(bodyRight), up = attLook.dot(bodyUp);
   const strength = Math.min(Math.hypot(right, up) / 0.15, 1);
   att.inYaw -= right * strength;
   att.inPitch += up * strength;
 }
 
-/* WASD 姿态键：AD 滚转、WS 俯仰，机位不动只转视线/机身 */
+/* WASD 辅助平移（上下左右）、QE 滚转；俯仰/偏航交给右键指向线与右摇杆 */
 const held = new Set();
-// AD 是滚筒转动（绕视轴 roll），不是转向；WS 仍是俯仰。
-// 转向（偏航）交给右键/触屏的指向线操控与右摇杆
-const ATT_KEYS = { KeyW: "pitchU", KeyS: "pitchD", KeyA: "rollL", KeyD: "rollR" };
+const PAN_KEYS = { KeyW: "panU", KeyS: "panD", KeyA: "panL", KeyD: "panR" };
+const ROLL_KEYS = { KeyQ: "rollL", KeyE: "rollR" };
+const MOVE_KEYS = { ...PAN_KEYS, ...ROLL_KEYS };
 const panRight = new THREE.Vector3();
 const panUp = new THREE.Vector3();
 
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
-  if (ATT_KEYS[e.code]) { held.add(ATT_KEYS[e.code]); e.preventDefault(); }
+  if (MOVE_KEYS[e.code]) { held.add(MOVE_KEYS[e.code]); e.preventDefault(); }
 });
 addEventListener("keyup", (e) => {
-  if (ATT_KEYS[e.code]) held.delete(ATT_KEYS[e.code]);
+  if (MOVE_KEYS[e.code]) held.delete(MOVE_KEYS[e.code]);
 });
 // 任何会夺走键盘焦点的动作都可能让 keyup 丢失，键就永远卡在按下状态。
 // 右键菜单是最容易触发的一种，这里把所有出口都兜住。
@@ -331,6 +315,15 @@ function panScreen(dx, dy) {
   }
 }
 
+// WASD 辅助平移：屏幕上下左右，速率与捏合/摇杆平移同一挡（RCS 平移上限）
+function panKeyStep(dt) {
+  if (!held.has("panU") && !held.has("panD") && !held.has("panL") && !held.has("panR")) return;
+  const step = ENGINE.rcs.panMax * MANUAL_BOOST * dt;
+  const dx = (held.has("panR") ? step : 0) - (held.has("panL") ? step : 0);
+  const dy = (held.has("panU") ? step : 0) - (held.has("panD") ? step : 0);
+  if (dx || dy) panScreen(dx, dy);
+}
+
 // 半径 goal 同理拴住：倒车侧只有 100 ly/s，不拴会积累几十秒的橡皮筋
 function leashRadius() {
   cam.goalRadius = THREE.MathUtils.clamp(cam.goalRadius,
@@ -338,24 +331,30 @@ function leashRadius() {
     Math.min(cam.maxRadius, cam.radius + ENGINE.main.vRev * 2));
 }
 
-/* ── 手动飞行模型：姿态 + 节流阀 ─────────────────────
-   姿态输入给期望角速率，经 RCS 斜坡收敛；每帧把视线绕机位旋转，
-   再用 aimFrom 反解回轨道参数并同步 goal，机位纹丝不动。
+/* ── 手动飞行模型：机身姿态 + 节流阀 ───────────────────
+   朝向由三个持久正交向量 bodyFwd/bodyRight/bodyUp（机身系，camera→target
+   为 fwd）维护：偏航绕当前 bodyUp 转、俯仰绕当前 bodyRight 转、滚转绕
+   当前（俯仰后）bodyFwd 转，全部局部系增量合成——不像旧版每帧从「世界 Y +
+   叉乘」重新反解参考基，滚转后俯仰/偏航仍是屏幕上的俯仰/偏航，极区也不
+   会有参考基跳变。cam.theta/phi 只在帧末从 bodyFwd 反算，供自动驾驶体系
+   （burnPlan/aimFrom/pivot 插值）读取，不再是手动姿态的驱动源；姿态旋转
+   不触碰 radius/target，位置与朝向彻底解耦。
    节流阀：滚轮/左杆改目标速度档位，v 收敛后沿视线平移 target。 */
 const FLIP_UP = new THREE.Vector3(0, 1, 0);
 const FLIP_RIGHT = new THREE.Vector3(1, 0, 0);
+const bodyFwd = new THREE.Vector3();
+const bodyRight = new THREE.Vector3();
+const bodyUp = new THREE.Vector3();
 const att = { yaw: 0, pitch: 0, roll: 0, inYaw: 0, inPitch: 0 };   // rad/s 与本帧杆量
+const IDLE_SPIN_RATE = 0.012;   // rad/s，无操作时的缓慢自转速率
 const throttle = { gear: 0, v: 0 };                        // su/s，带符号
 // 低速段更密：档位间隔随速度增大，转向/巡航贴近的低速区能精细停靠
 const GEAR_STEPS =
   [-100, -50, -20, 0, 10, 25, 50, 100, 175, 275, 400, 550, 775, 1000];  // ly/s
 const GEAR_MIN = GEAR_STEPS[0] * SCENE_SCALE;
 const GEAR_MAX = GEAR_STEPS[GEAR_STEPS.length - 1] * SCENE_SCALE;
-const attPos = new THREE.Vector3();
 const attDir = new THREE.Vector3();
-const attRight = new THREE.Vector3();
 const attLook = new THREE.Vector3();
-const attPan = new THREE.Vector3();
 
 function shiftGear(dir) {
   const g = throttle.gear / SCENE_SCALE;
@@ -369,27 +368,34 @@ function shiftGear(dir) {
   }
 }
 
-const TWO_PI = Math.PI * 2;
-// roll 是循环量，钳到 (-π,π] 再用；这样自动模式的衰减总走最短弧回正，
-// 也让 cos/sin(roll) 在环绕处连续，360° 连转不会卡顿或跳变
-function wrapPi(a) {
-  a = ((a % TWO_PI) + TWO_PI) % TWO_PI;
-  return a > Math.PI ? a - TWO_PI : a;
+// 由 (theta, phi) 重建一组"中性"（滚转为 0）的机身基向量。只在从自动/
+// 辅助驾驶交回手动的那一帧调用一次，不在逐帧路径上，因此这里的极区
+// 分支不会像旧版一样造成逐帧跳变，只是一次性的、无感的初始化。
+function syncBodyFromSpherical() {
+  const sp = Math.sin(cam.phi);
+  bodyFwd.set(-sp * Math.sin(cam.theta), -Math.cos(cam.phi), -sp * Math.cos(cam.theta));
+  if (Math.abs(bodyFwd.y) < 0.999) bodyRight.crossVectors(bodyFwd, FLIP_UP).normalize();
+  else bodyRight.copy(FLIP_RIGHT);
+  bodyUp.crossVectors(bodyRight, bodyFwd).normalize();
 }
+syncBodyFromSpherical();
+
+const PHI_MARGIN = 0.04;
+const Y_LIMIT = Math.cos(PHI_MARGIN);   // |bodyFwd.y| 上限，对应 phi∈[0.04, π-0.04]
+let wasAutoOrAssist = false;
 
 function attitudeStep(dt) {
-  if (auto.on || auto.assist) {
+  const inAuto = auto.on || auto.assist;
+  if (inAuto) {
     att.yaw = 0; att.pitch = 0; att.roll = 0; att.inYaw = 0; att.inPitch = 0;
-    // 自动接管时机身按最短弧自动回正，不再手动保持滚转
-    if (cam.roll) {
-      const r = wrapPi(cam.roll) * Math.pow(0.02, dt);
-      cam.roll = Math.abs(r) > 1e-4 ? r : 0;
-    }
+    wasAutoOrAssist = true;
     return;
   }
+  // 自动/辅助刚交回手动：机身基从这一刻的朝向重新起步，滚转归零
+  if (wasAutoOrAssist) { syncBodyFromSpherical(); wasAutoOrAssist = false; }
+
   const iy = THREE.MathUtils.clamp(att.inYaw, -1, 1);
-  const ip = THREE.MathUtils.clamp(att.inPitch
-    + (held.has("pitchU") ? 1 : 0) - (held.has("pitchD") ? 1 : 0), -1, 1);
+  const ip = THREE.MathUtils.clamp(att.inPitch, -1, 1);
   const ir = (held.has("rollR") ? 1 : 0) - (held.has("rollL") ? 1 : 0);
   att.inYaw = 0; att.inPitch = 0;
   const lim = ENGINE.rcs.angAccel * MANUAL_BOOST * dt;
@@ -397,39 +403,37 @@ function attitudeStep(dt) {
   att.yaw += THREE.MathUtils.clamp(iy * cap - att.yaw, -lim, lim);
   att.pitch += THREE.MathUtils.clamp(ip * cap - att.pitch, -lim, lim);
   att.roll += THREE.MathUtils.clamp(ir * cap - att.roll, -lim, lim);
-  if (att.roll) cam.roll = wrapPi(cam.roll + att.roll * dt);
-  if (!att.yaw && !att.pitch) return;
+  const yawA = att.yaw * dt, pitA = att.pitch * dt, rollA = att.roll * dt;
+  if (!yawA && !pitA && !rollA) return;
 
-  // 机位与单位视线；偏航绕世界 Y，俯仰绕视线右轴（滚转只改 up，不进这里）
-  const sp = Math.sin(cam.phi);
-  attPos.set(
-    cam.target.x + cam.radius * sp * Math.sin(cam.theta),
-    cam.target.y + cam.radius * Math.cos(cam.phi),
-    cam.target.z + cam.radius * sp * Math.cos(cam.theta));
-  attDir.copy(cam.target).sub(attPos).divideScalar(cam.radius);
-  const yawA = att.yaw * dt;
-  const pitA = att.pitch * dt;
-  if (yawA) attDir.applyAxisAngle(FLIP_UP, yawA);
-  if (pitA) {
-    // 单帧俯仰量夹在极区外：视线不越顶，反解 theta 不会翻 π
-    const phiV = Math.acos(THREE.MathUtils.clamp(attDir.y, -1, 1));
-    const db = THREE.MathUtils.clamp(pitA,
-      phiV - (Math.PI - 0.04), phiV - 0.04);
-    attRight.set(-attDir.z, 0, attDir.x).normalize();
-    attDir.applyAxisAngle(attRight, db).normalize();
+  // 偏航/俯仰/滚转均绕机身"当前"轴转（局部系合成），滚转后俯仰/偏航
+  // 仍是屏幕上的俯仰/偏航；三者依次作用在同一组持久向量上
+  if (yawA) {
+    bodyFwd.applyAxisAngle(bodyUp, yawA);
+    bodyRight.applyAxisAngle(bodyUp, yawA);
   }
-  // 反解回 (target,theta,phi,radius)，cam 与 goal 同步，机位不动。
-  // 捏合暂存在 goal 上的缩放/平移增量先取出再放回，姿态旋转不吞并发手势
-  const dR = cam.goalRadius - cam.radius;
-  attPan.subVectors(cam.goalTarget, cam.target);
-  const a = aimFrom(attPos,
-    attLook.copy(attPos).addScaledVector(attDir, cam.radius), cam.theta);
-  cam.theta = cam.goalTheta = a.theta;
-  cam.phi = cam.goalPhi = a.phi;
-  cam.radius = a.radius;
-  cam.goalRadius = a.radius + dR;
-  cam.target.copy(a.target);
-  cam.goalTarget.copy(a.target).add(attPan);
+  if (pitA) {
+    bodyFwd.applyAxisAngle(bodyRight, pitA);
+    bodyUp.applyAxisAngle(bodyRight, pitA);
+  }
+  if (rollA) {
+    bodyRight.applyAxisAngle(bodyFwd, rollA);
+    bodyUp.applyAxisAngle(bodyFwd, rollA);
+  }
+
+  // 极区安全钳制 + 正交漂移校正一并做：夹住 bodyFwd.y，right/up 重新正交化
+  if (Math.abs(bodyFwd.y) > Y_LIMIT) {
+    const h = Math.hypot(bodyFwd.x, bodyFwd.z) || 1e-6;
+    const s = Math.sqrt(Math.max(0, 1 - Y_LIMIT * Y_LIMIT)) / h;
+    bodyFwd.set(bodyFwd.x * s, Math.sign(bodyFwd.y) * Y_LIMIT, bodyFwd.z * s);
+  }
+  bodyFwd.normalize();
+  bodyRight.addScaledVector(bodyFwd, -bodyRight.dot(bodyFwd)).normalize();
+  bodyUp.crossVectors(bodyRight, bodyFwd).normalize();
+
+  // 反算 theta/phi 供自动驾驶体系读取；姿态旋转不改位置，target/radius 不变
+  cam.theta = cam.goalTheta = unwrap(Math.atan2(-bodyFwd.x, -bodyFwd.z), cam.theta);
+  cam.phi = cam.goalPhi = Math.acos(THREE.MathUtils.clamp(-bodyFwd.y, -1, 1));
 }
 
 function throttleStep(dt) {
@@ -458,11 +462,10 @@ function throttleStep(dt) {
     throttle.v += THREE.MathUtils.clamp(err, -cap, cap);
   }
   if (!throttle.v) return;
-  // 沿视线平移 target 与 goal：radius/theta/phi 不变即直线前飞
-  const sp = Math.sin(cam.phi);
-  attDir.set(-sp * Math.sin(cam.theta), -Math.cos(cam.phi), -sp * Math.cos(cam.theta));
-  cam.target.addScaledVector(attDir, throttle.v * dt);
-  cam.goalTarget.addScaledVector(attDir, throttle.v * dt);
+  // 沿视线平移 target 与 goal：radius 不变即直线前飞；bodyFwd 由
+  // attitudeStep 逐帧维护，手动模式下与 theta/phi 严格同步
+  cam.target.addScaledVector(bodyFwd, throttle.v * dt);
+  cam.goalTarget.addScaledVector(bodyFwd, throttle.v * dt);
 }
 
 /* ── 虚拟摇杆：左杆调节流档位、右杆偏航俯仰，仅触屏可见 ──────────
@@ -972,9 +975,34 @@ function select(i) {
   F.mag.textContent = t.m.toFixed(2);
   fillLinks(i);
   requestAnimationFrame(syncSkew);   // 内容高度变了要重算倾角
+  // 点选只锁定目标，不再自动飞过去——按开火键（Space/触屏开火按钮）才接敌
+}
 
-  // 手动点选走辅助驾驶分段送达；巡游/漫游随后会用自己的段列表覆盖
-  if (!auto.on) startAssist(i);
+// 开火：手动模式下有锁定目标才接敌，同一套辅助驾驶分段送达
+function fireEngage() {
+  if (selected >= 0 && !auto.on) startAssist(selected);
+}
+const fireBtn = document.getElementById("fire-btn");
+fireBtn.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  setAuto(false);
+  fireEngage();
+});
+
+// 触屏滚转按钮：按住持续滚转、松开即停，直接复用 held 这条既有输入线路
+// （与键盘 QE 完全同路，attitudeStep 不用改）
+for (const [id, key] of [["roll-l-btn", "rollL"], ["roll-r-btn", "rollR"]]) {
+  const el = document.getElementById(id);
+  const stop = () => held.delete(key);
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    setAuto(false);
+    held.add(key);
+  });
+  el.addEventListener("pointerup", stop);
+  el.addEventListener("pointercancel", stop);
+  addEventListener("blur", stop);
 }
 
 const elTargets = document.getElementById("targets");
@@ -992,23 +1020,21 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   return el;
 });
 
-/* 面板剪影：顶边向中心上扬、底边向中心上扫，同向朝中心收拢；
-   内侧边是贴上缘的窄带。两个角度恒定，与面板尺寸无关。
-   剪影和描边多边形共用同一组顶点；空板高度不足时内侧带缩成尖劈。 */
-const PANEL_TOP_DEG = 4.5;
-const PANEL_BOT_DEG = 22;
+/* 面板剪影：近似平行四边形——单一倾角，外侧边全高、内侧边（朝屏幕中心）
+   上下各收进同一点距，与面板尺寸无关。剪影和描边多边形共用同一组顶点；
+   空板高度不足时内侧边缩成尖劈。 */
+const PANEL_SKEW_DEG = 6;
 
 function syncSkew() {
   for (const [el, innerRight] of [[panelLeft, true], [panelRight, false]]) {
     // rotateY 下 getBoundingClientRect 是投影包围盒，必须用 offset 尺寸
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) continue;
-    const drop = Math.min(w * Math.tan((PANEL_TOP_DEG * Math.PI) / 180), h);
-    const sweep = w * Math.tan((PANEL_BOT_DEG * Math.PI) / 180);
-    const yB = Math.max(h - sweep, 0);
+    const drop = Math.min(w * Math.tan((PANEL_SKEW_DEG * Math.PI) / 180), h / 2);
+    const yA = drop, yB = h - drop;
     const pts = innerRight
-      ? [[0, drop], [w, 0], [w, yB], [0, h]]
-      : [[0, 0], [w, drop], [w, h], [0, yB]];
+      ? [[0, 0], [w, yA], [w, yB], [0, h]]
+      : [[0, yA], [w, 0], [w, h], [0, yB]];
     el.style.clipPath =
       `polygon(${pts.map(([x, y]) => `${x}px ${y.toFixed(1)}px`).join(", ")})`;
     const edge = el.querySelector(".panel-edge");
@@ -1016,9 +1042,9 @@ function syncSkew() {
     edge.firstElementChild.setAttribute("points",
       pts.map(([x, y]) => `${x},${y.toFixed(1)}`).join(" "));
   }
-  // 内容跟着顶边倾斜：左板向中心上扬取负角，右板镜像取正，文字与顶边平行
-  document.documentElement.style.setProperty("--skew-l", `${-PANEL_TOP_DEG}deg`);
-  document.documentElement.style.setProperty("--skew-r", `${PANEL_TOP_DEG}deg`);
+  // 内容跟着倾角一起斜切：左板取负角，右板镜像取正，文字与两条边都平行
+  document.documentElement.style.setProperty("--skew-l", `${-PANEL_SKEW_DEG}deg`);
+  document.documentElement.style.setProperty("--skew-r", `${PANEL_SKEW_DEG}deg`);
 }
 // 面板高度随内容增减，剪影要跟着重算
 const panelRO = new ResizeObserver(() => syncSkew());
@@ -1072,6 +1098,21 @@ function clearLinks() {
   document.body.classList.remove("has-sel");
 }
 
+// 数字键 1-8 直接点名槽位；PageUp/PageDown 在已显示的槽位间循环切换，
+// 从当前选中项（若恰在槽位列表里）接着走，否则从头开始
+function pickTargetSlot(k) {
+  const el = targetSlots[k];
+  if (el && el.dataset.i) select(Number(el.dataset.i));
+}
+function cycleTarget(dir) {
+  const filled = targetSlots
+    .map((el) => (el.dataset.i ? Number(el.dataset.i) : -1))
+    .filter((i) => i >= 0);
+  if (!filled.length) return;
+  const idx = filled.indexOf(selected);
+  select(filled[idx < 0 ? 0 : (idx + dir + filled.length) % filled.length]);
+}
+
 function pick(x, y, focus) {
   const i = nearest(x, y, 16);
   // 取消选中只清标记，不动镜头 —— 回弹会把用户刚调好的视角冲掉
@@ -1106,9 +1147,23 @@ function hexPoints(cx, cy, r) {
 // 拖尾把星点画成滞后的质心，标记按瞬时投影走会脱节；
 // 用拖尾同源的 decay 做同步 EMA，decay=0（静止/防晕）时无平滑
 const mark = { sx: 0, sy: 0, hx: 0, hy: 0, sel: -1, hov: -1 };
+const elLockDot = document.getElementById("lock-dot");
 
 function updateMarker() {
   const k = 1 - decay;
+  // 锁定指示器：未选中时暗态守在屏幕正中，选中且可见时移动到目标身上并变亮；
+  // 选中但暂时转出画面时先退回中心，不跟丢
+  const locked = selected >= 0 && visible[selected];
+  elLockDot.classList.toggle("locked", locked);
+  if (locked) {
+    const lx = mark.sel === selected ? mark.sx : projected[selected * 2];
+    const ly = mark.sel === selected ? mark.sy : projected[selected * 2 + 1];
+    elLockDot.setAttribute("cx", lx.toFixed(1));
+    elLockDot.setAttribute("cy", ly.toFixed(1));
+  } else {
+    elLockDot.setAttribute("cx", (vw() / 2).toFixed(1));
+    elLockDot.setAttribute("cy", (vh() / 2).toFixed(1));
+  }
   // 悬停标记与选中标记同形同尺寸，只靠透明度区分；选中的那颗不重复画
   const showHover = hovered >= 0 && hovered !== selected && visible[hovered];
   if (showHover) {
@@ -1136,7 +1191,7 @@ function updateMarker() {
 
   // 类型字母在左上、距离在右上，基线与平顶六边形的上边取平（0.866R）
   const dLy = camera.position.distanceTo(starVec(selected)) / SCENE_SCALE;
-  elRingDist.textContent = `${dLy.toFixed(dLy >= 1000 ? 0 : 1)} ly`;
+  elRingDist.textContent = `${dLy.toFixed(2)} ly`;
   const topY = (sy - RING_R * 0.866).toFixed(1);
   elRingCls.setAttribute("x", (sx - RING_R - 5).toFixed(1));
   elRingCls.setAttribute("y", topY);
@@ -1640,7 +1695,7 @@ for (const ev of ["pointerdown", "wheel"]) {
 }
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;   // 搜索框里打 wasd 不算飞行操作
-  if (ATT_KEYS[e.code]) setAuto(false);
+  if (MOVE_KEYS[e.code]) setAuto(false);
 });
 
 /* ── 搜索 ───────────────────────────────────────────── */
@@ -1749,6 +1804,16 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     openSearch();
   }
+});
+
+// 开火（接敌）、攻击指示器数字键选目标、PageUp/PageDown 循环切换
+addEventListener("keydown", (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (e.code === "Space") { e.preventDefault(); fireEngage(); return; }
+  if (e.code === "PageUp") { e.preventDefault(); cycleTarget(-1); return; }
+  if (e.code === "PageDown") { e.preventDefault(); cycleTarget(1); return; }
+  const m = /^Digit([1-8])$/.exec(e.code);
+  if (m) { e.preventDefault(); pickTargetSlot(Number(m[1]) - 1); }
 });
 
 /* ── 底部弧形仪表 ───────────────────────────────────
@@ -1936,11 +2001,15 @@ function frame(now) {
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
   stepAuto();
-  if (opt.spin && !dragging && held.size === 0 && !auto.on && !joyActive)
-    cam.goalTheta += dt * 0.012;
+  // 闲置自转：并入 inYaw 输入线路（走机身姿态系统），而不是直接改 goalTheta——
+  // 手动模式下姿态已经完全由 attitudeStep 驱动，goalTheta 只是反算出的只读快照
+  if (opt.spin && !dragging && held.size === 0 && !auto.on && !joyActive) {
+    att.inYaw += IDLE_SPIN_RATE / (ENGINE.rcs.angMax * MANUAL_BOOST);
+  }
   joyStep(dt);          // 杆量先落进姿态/节流输入
   pointerSteerStep();   // 指向线同一路输入
   steerCenterStep();    // 中键长按转向银心，同一路输入
+  panKeyStep(dt);       // WASD 辅助平移
   attitudeStep(dt);
   throttleStep(dt);
   applyCamera(dt);
@@ -2136,10 +2205,10 @@ function renderNavBall() {
   navRenderer.render(navScene, navCamFull);
 }
 
-/* ── 操作指南弹窗：首访自动弹出，显示菜单可重开 ──────── */
+/* ── 操作指南弹窗：首访自动弹出，左上角常驻按钮可重开 ──── */
 const helpModal = document.getElementById("help-modal");
 const helpClose = document.getElementById("help-close");
-const helpOpen = document.getElementById("help-open");
+const helpBtn = document.getElementById("help-btn");
 
 // 弹窗只挡「新」输入（捕获阶段 keydown + 遮罩挡 canvas 指针），
 // 已经按住的键、已经设定的档位不会被冻结——开窗时顺手清掉，
@@ -2156,11 +2225,7 @@ helpClose.addEventListener("click", closeHelp);
 helpModal.addEventListener("click", (e) => {
   if (e.target === helpModal) closeHelp();
 });
-helpOpen.addEventListener("click", () => {
-  optsBox.classList.remove("on");
-  optBtn.classList.remove("on");
-  openHelp();
-});
+helpBtn.addEventListener("click", openHelp);
 // 弹窗打开期间捕获按键：Esc 关闭，其余不落到飞行/搜索快捷键
 addEventListener("keydown", (e) => {
   if (helpModal.hidden) return;
