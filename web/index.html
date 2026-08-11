@@ -14,7 +14,7 @@
     --reticle: #7ec8ff;
     --text: #dfe8f2;
     --text-dim: #8497ad;
-    --ring-r: 19px;
+    --ring-r: 2px;   /* 目标指示器：小而粗的靶点 */
     --panel-l: 22rem;
     --panel-r: 20rem;
   }
@@ -49,9 +49,9 @@
     transition: opacity .24s ease;
   }
   #leader { stroke-width: 1; stroke-dasharray: 3 4; }
-  #ring { stroke-width: 1.4; }
-  #ring-glow { stroke-width: 4; }
-  #hover-ring { stroke-width: 1.4; transition: opacity .12s ease; }
+  #ring { stroke-width: 4.2; }
+  #ring-glow { stroke-width: 9; }
+  #hover-ring { stroke-width: 4.2; transition: opacity .12s ease; }
   #link-layer.sel #leader { opacity: .62; }
   #link-layer.sel #ring { opacity: 1; }
   #link-layer.sel #ring-glow { opacity: .16; }
@@ -89,17 +89,22 @@
     display: flex; flex-direction: column; align-items: center; gap: .26rem;
     pointer-events: none; text-align: center;
   }
-  #bgm-name {
-    font-size: .66rem; letter-spacing: .16em; color: var(--accent-warm); opacity: .8;
-    max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  #hud-icons { display: flex; gap: .7rem; }
+  .ic { width: 1.05rem; height: 1.05rem; opacity: .22; transition: opacity .2s, filter .2s; }
+  .ic svg { width: 100%; height: 100%; fill: none; stroke: var(--accent);
+            stroke-width: 1.2; stroke-linejoin: round; }
+  .ic.on { opacity: 1; filter: drop-shadow(0 0 5px rgba(242,200,75,.7)); }
+  #ic-rev.on svg { stroke: #ff9a6b; }
+  #ic-rev.on { filter: drop-shadow(0 0 5px rgba(255,154,107,.7)); }
+
+  /* 速度读数嵌在两条弧之间 */
+  #speed-readout {
+    position: fixed; z-index: 7; pointer-events: none;
+    transform: translate(-50%, -50%);
+    font-size: .58rem; letter-spacing: .06em; color: var(--accent);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
   }
-  #hud-sub {
-    font-size: .55rem; letter-spacing: .2em; color: var(--text-dim);
-    display: flex; gap: 1.2rem; font-variant-numeric: tabular-nums;
-  }
-  #hud-sub b { color: var(--accent); font-weight: 500; }
-  #hud-mode { transition: color .3s, text-shadow .3s; }
-  body.auto #hud-mode { color: var(--accent); text-shadow: 0 0 10px rgba(242,200,75,.6); }
+  #speed-readout em { font-style: normal; color: var(--text-dim); font-size: .5rem; }
 
   /* ── 底部左右信息卡：梯形，外侧高、内侧矮 ───────────── */
   .hud-panel {
@@ -112,8 +117,8 @@
   }
   .hud-panel.on { opacity: 1; visibility: visible; }
   /* 内容跟着梯形一起倾斜，否则文字与边缘不平行 */
-  #panel-left > *:not(.panel-edge) { transform: skewY(3.2deg); }
-  #panel-right > *:not(.panel-edge) { transform: skewY(-3.2deg); }
+  #panel-left > *:not(.panel-edge) { transform: skewY(var(--skew-l, 0deg)); }
+  #panel-right > *:not(.panel-edge) { transform: skewY(var(--skew-r, 0deg)); }
   /* clip-path 会把 border 一起裁掉，边框改用内嵌 SVG 描边 */
   .panel-edge {
     position: absolute; inset: 0; width: 100%; height: 100%;
@@ -126,15 +131,14 @@
 
   #panel-left {
     left: 8vw; width: var(--panel-l);
-    clip-path: polygon(0 0, 100% 6%, 100% 90%, 0 100%);
+    clip-path: polygon(0 0, 100% 8%, 100% 100%, 0 92%);
     padding: 1.1rem 1.5rem 1.5rem .8rem;
     min-height: 15rem;
   }
   #panel-right {
     right: 8vw; width: var(--panel-r);
-    clip-path: polygon(0 6%, 100% 0, 100% 100%, 0 90%);
-    padding: 1.5rem .8rem 1.5rem 1.5rem;
-    min-height: 15rem;
+    clip-path: polygon(0 8%, 100% 0, 100% 92%, 0 100%);
+    padding: 1.4rem .8rem 1.4rem 1.5rem;
     display: flex; flex-direction: column; gap: .4rem;
   }
 
@@ -170,14 +174,17 @@
   }
   .field.hot b { color: var(--accent); }
   .field.warm b { color: var(--accent-warm); }
+  .field.bgm { display: none; }
+  body.bgm-on .field.bgm { display: flex; }
+  .field.bgm b { color: var(--accent); }
 
   /* ── 攻击指示器：相近曲目的槽位 ─────────────────────── */
   #targets { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
   .target {
     position: absolute; pointer-events: auto; cursor: pointer;
     display: flex; align-items: center; gap: .4rem;
-    max-width: 13rem; padding: .18rem .42rem;
-    font-size: .58rem; line-height: 1.35; letter-spacing: .02em;
+    width: 15rem; min-height: 1.55rem; padding: .22rem .55rem;
+    font-size: .58rem; line-height: 1.3; letter-spacing: .02em;
     opacity: 0; transition: opacity .3s ease, filter .18s;
   }
   /* 极淡的蓝底，朝向中心的一侧略深，取代原来生硬的边框 */
@@ -192,13 +199,17 @@
   .target .w { flex: none; color: var(--accent); font-size: .52rem;
                font-variant-numeric: tabular-nums; }
   /* 数字放离心侧：左列在最左，右列在最右 */
-  .target.left { transform: translateY(-50%); flex-direction: row-reverse; }
-  .target.right { transform: translate(-100%, -50%); }
+  /* 锚在弧的外侧：左列向左展开，右列向右展开 */
+  .target.left { transform: translate(-100%, -50%); flex-direction: row-reverse; }
+  .target.right { transform: translateY(-50%); }
   .target.left .t { text-align: left; }
   .target.right .t { text-align: right; }
 
   /* ── 搜索：常规圆角边框 ───────────────────────────── */
-  #search-wrap { position: fixed; left: 2.4rem; top: 1.9rem; z-index: 8; width: min(22rem, 26vw); }
+  #search-wrap { position: relative; z-index: 8; }
+  #search-btn { padding: .4rem .62rem; }
+  #search-box { display: none; position: absolute; left: 0; top: 2.3rem; width: min(22rem, 26vw); }
+  #search-box.on { display: block; }
   #search {
     width: 100%; padding: .5rem .9rem;
     background: rgba(8, 14, 26, .7); color: var(--text);
@@ -253,7 +264,7 @@
     display: flex; flex-direction: column; align-items: flex-start; gap: .5rem;
   }
   #ctl-row { display: flex; gap: .5rem; }
-  #auto-btn, #opt-btn {
+  #auto-btn, #opt-btn, #search-btn {
     display: flex; align-items: center; gap: .45rem;
     padding: .4rem .9rem .4rem .75rem;
     background: rgba(8, 14, 26, .7); color: var(--text-dim);
@@ -262,9 +273,9 @@
     font: inherit; font-size: .62rem; letter-spacing: .12em; cursor: pointer;
     transition: color .2s, border-color .2s;
   }
-  #auto-btn:hover, #opt-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
+  #auto-btn:hover, #opt-btn:hover, #search-btn:hover { color: var(--text); border-color: rgba(242, 200, 75, .5); }
   #opt-btn { padding: .4rem .9rem; }
-  #opt-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
+  #opt-btn.on, #search-btn.on { color: var(--accent); border-color: rgba(242, 200, 75, .5); }
 
   #opts {
     display: none; flex-direction: column; gap: .34rem;
@@ -317,6 +328,7 @@
               border-bottom: 1px solid rgba(242, 200, 75, .22); transition: color .2s; }
   #footer a:hover { color: var(--accent); border-bottom-color: var(--accent); }
   #footer .sep { opacity: .45; margin: 0 .45rem; }
+  #footer .thanks { margin-top: .3rem; opacity: .8; }
 
   #loading {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
@@ -406,16 +418,26 @@
 </svg>
 
 <div id="hud-labels">
-  <div id="bgm-name">—</div>
-  <div id="hud-sub">
-    <div id="hud-mode">手动</div>
-    <div>速度 <b id="hud-speed">0.0</b> ly/s</div>
+  <div id="hud-icons">
+    <span class="ic" id="ic-main" title="主推进引擎">
+      <svg viewBox="0 0 16 16"><path d="M8 1.5 11.5 9H4.5z"/><path d="M5.5 10.5h5l-2.5 4z"/></svg></span>
+    <span class="ic" id="ic-rcs" title="矢量喷口">
+      <svg viewBox="0 0 16 16"><path d="M2.5 5.5h4v-2l3 3-3 3v-2h-4z"/>
+        <path d="M13.5 10.5h-4v2l-3-3 3-3v2h4z"/></svg></span>
+    <span class="ic" id="ic-auto" title="驾驶模式">
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11M2.5 8h11"/></svg></span>
+    <span class="ic" id="ic-lock" title="目标锁定">
+      <svg viewBox="0 0 16 16"><path d="M3 5.5V3h2.5M13 5.5V3h-2.5M3 10.5V13h2.5M13 10.5V13h-2.5"/>
+        <circle cx="8" cy="8" r="1.6"/></svg></span>
+    <span class="ic" id="ic-rev" title="倒车">
+      <svg viewBox="0 0 16 16"><path d="M8 14.5 4.5 7h7z"/><path d="M5.5 5.5h5l-2.5-4z"/></svg></span>
   </div>
 </div>
+<div id="speed-readout">0.0 <em>ly/s</em></div>
 
 <div id="panel-left" class="hud-panel">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,0 100,14 100,86 0,100"/>
+    <polygon points="0,0 100,8 100,100 0,92"/>
   </svg>
   <div id="cover">
     <img class="glyph" src="./icon.svg" alt="" width="44" height="44">
@@ -425,7 +447,7 @@
 
 <div id="panel-right" class="hud-panel">
   <svg class="panel-edge" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <polygon points="0,14 100,0 100,100 0,86"/>
+    <polygon points="0,8 100,0 100,92 0,100"/>
   </svg>
   <div class="field"><span>UP 主</span><b id="f-author"></b></div>
   <div class="field"><span>投稿</span><b id="f-date"></b></div>
@@ -434,16 +456,11 @@
   <div class="field warm"><span>恒星</span><b id="f-tyc"></b></div>
   <div class="field warm"><span>光谱</span><b id="f-sp"></b></div>
   <div class="field warm"><span>视星等</span><b id="f-mag"></b></div>
+  <div class="field bgm"><span>正在播放</span><b id="f-bgm">—</b></div>
 </div>
 
 <!-- 攻击指示器：相近曲目分布在屏幕中心两侧的弧上，每侧四个槽位 -->
 <div id="targets"></div>
-
-<div id="search-wrap">
-  <input id="search" type="search" autocomplete="off" spellcheck="false"
-         placeholder="搜索曲名 / UP 主 / TYC 编号">
-  <div id="results"></div>
-</div>
 
 <div id="brand">
   <img id="mark" src="./icon.svg" alt="" width="34" height="34">
@@ -460,6 +477,18 @@
   <div id="ctl-row">
     <button id="auto-btn" type="button">自动巡游</button>
     <button id="opt-btn" type="button">显示</button>
+    <div id="search-wrap">
+      <button id="search-btn" type="button" aria-label="搜索">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
+             stroke="currentColor" stroke-width="1.5">
+          <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      </button>
+      <div id="search-box">
+        <input id="search" type="search" autocomplete="off" spellcheck="false"
+               placeholder="搜索曲名 / UP 主 / TYC 编号">
+        <div id="results"></div>
+      </div>
+    </div>
   </div>
   <div id="opts">
     <label><input type="checkbox" id="o-reticle" checked>中央指示器</label>
@@ -477,6 +506,7 @@
      target="_blank" rel="noopener">开源仓库</a>
   <span class="sep">/</span><a href="https://www.cloudflare.com/"
      target="_blank" rel="noopener">Powered by Cloudflare</a>
+  <div class="thanks">部分界面灵感来自《X4: Foundations》《Stellaris》等太空游戏</div>
 </div>
 
 <div id="loading">

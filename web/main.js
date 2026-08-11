@@ -30,12 +30,55 @@ const cam = {
   minRadius: 2, maxRadius: 420,
 };
 
+/* 引擎模型：角速度、加速度、最大速度都有上限，不再是无限快的指数逼近。
+   手动模式下各项 x1.5，操作起来更跟手。 */
+const ENGINE = {
+  angAccel: 2.4, angMax: 1.15,   // rad/s^2, rad/s
+  radAccel: 2.8, radMax: 1.45,   // 对 ln(半径) 计，与场景尺度无关
+  panAccel: 3.2, panMax: 1.9,    // 相对当前半径
+};
+const MANUAL_BOOST = 1.5;
+const vel = { theta: 0, phi: 0, logR: 0, pan: 0 };
+const panDelta = new THREE.Vector3();
+
+// 带加减速的抵达：期望速度取 sqrt(2*a*误差)，于是到点时速度正好归零
+function approach(cur, v, goal, accel, maxV, dt) {
+  const err = goal - cur;
+  if (Math.abs(err) < 1e-6) return [goal, 0];
+  const want = THREE.MathUtils.clamp(
+    Math.sign(err) * Math.sqrt(2 * accel * Math.abs(err)), -maxV, maxV);
+  const nv = v + THREE.MathUtils.clamp(want - v, -accel * dt, accel * dt);
+  const next = cur + nv * dt;
+  if ((goal - next) * err <= 0) return [goal, 0];   // 越过就吸附，免得来回抖
+  return [next, nv];
+}
+
 function applyCamera(dt) {
-  const k = 1 - Math.pow(0.0022, dt);
-  cam.theta += (cam.goalTheta - cam.theta) * k;
-  cam.phi += (cam.goalPhi - cam.phi) * k;
-  cam.radius += (cam.goalRadius - cam.radius) * k;
-  cam.target.lerp(cam.goalTarget, k);
+  const g = auto.on ? 1 : MANUAL_BOOST;
+  [cam.theta, vel.theta] = approach(cam.theta, vel.theta, cam.goalTheta,
+    ENGINE.angAccel * g, ENGINE.angMax * g, dt);
+  [cam.phi, vel.phi] = approach(cam.phi, vel.phi, cam.goalPhi,
+    ENGINE.angAccel * g, ENGINE.angMax * g, dt);
+  cam.phi = THREE.MathUtils.clamp(cam.phi, 0.04, Math.PI - 0.04);
+
+  let lr;
+  [lr, vel.logR] = approach(Math.log(cam.radius), vel.logR, Math.log(cam.goalRadius),
+    ENGINE.radAccel * g, ENGINE.radMax * g, dt);
+  cam.radius = Math.exp(lr);
+
+  // 视点平移：把距离归一化到半径上，远近手感一致
+  panDelta.subVectors(cam.goalTarget, cam.target);
+  const len = panDelta.length();
+  if (len > 1e-5) {
+    const norm = len / Math.max(cam.radius, 1);
+    const [step, nv] = approach(0, vel.pan, norm,
+      ENGINE.panAccel * g, ENGINE.panMax * g, dt);
+    vel.pan = nv;
+    cam.target.addScaledVector(panDelta.divideScalar(len),
+      Math.min(step * Math.max(cam.radius, 1), len));
+  } else {
+    vel.pan = 0;
+  }
 
   const sp = Math.sin(cam.phi);
   camera.position.set(
@@ -558,6 +601,7 @@ function select(i) {
   F.sp.textContent = t.y || "—";
   F.mag.textContent = t.m.toFixed(2);
   fillLinks(i);
+  requestAnimationFrame(syncSkew);   // 内容高度变了要重算倾角
 
   cam.goalTarget.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
   cam.goalRadius = Math.max(cam.minRadius, Math.min(cam.goalRadius, 26));
@@ -565,7 +609,7 @@ function select(i) {
 
 const elTargets = document.getElementById("targets");
 const TARGET_MAX = 8;        // 每侧四个槽位
-const TARGET_SPREAD = 20;    // 槽位在弧上张开的角度
+const TARGET_SPREAD = 16;    // 槽位在弧上张开的角度
 
 const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
   const el = document.createElement("div");
@@ -579,9 +623,19 @@ const targetSlots = Array.from({ length: TARGET_MAX }, (_, k) => {
 });
 
 // 槽位钉在以屏幕中心为圆心、半径约半个屏宽的弧上，与相机无关，只随窗口变化
+// 面板是平行四边形，上下边斜率都是 8% 高 / 宽；倾角按实测尺寸算才对得齐
+function syncSkew() {
+  for (const [el, name, sign] of [[panelLeft, "--skew-l", 1], [panelRight, "--skew-r", -1]]) {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    const deg = (Math.atan2(0.08 * r.height, r.width) * 180) / Math.PI;
+    document.documentElement.style.setProperty(name, `${(sign * deg).toFixed(2)}deg`);
+  }
+}
+
 function layoutTargets() {
   const cx = innerWidth / 2, cy = innerHeight / 2;
-  const R = innerWidth * 0.46;
+  const R = innerWidth * 0.25 + 6;   // 贴在弧的外侧
   const half = TARGET_MAX / 2;
   targetSlots.forEach((el, k) => {
     const j = k % half;
@@ -769,7 +823,7 @@ bgm.addEventListener("ended", () => loadBgm(bgmIndex + 1, auto.on));
 
 const auto = {
   on: false, t0: 0, lastWasSelect: false,
-  segs: null, idx: 0, from: null,
+  segs: null, idx: 0, from: null, engine: "",
 };
 const FIELD_R = 26;   // 随机目标点的活动半径，场景单位
 
@@ -777,6 +831,8 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 const easeInOut = (u) => u * u * (3 - 2 * u);
 // 两端更平缓的五次缓动，转向不会一上来就窜出去
 const easeSoft = (u) => u * u * u * (u * (u * 6 - 15) + 10);
+const easeIn = (u) => u * u;              // 点火加速
+const easeOut = (u) => 1 - (1 - u) * (1 - u);   // 熄火滑行
 
 function snapshotCam() {
   return {
@@ -823,18 +879,28 @@ function startSegs(segs) {
   auto.t0 = performance.now();
 }
 
-function flyTo(point, finalRadius, flySec, holdSec) {
+// 一次机动拆成四段，对应真实的推进时序：
+// 矢量喷口转向 -> 主引擎点火加速 -> 熄火滑行减速 -> 入轨环绕
+function flyTo(point, finalRadius, burnSec, holdSec, arcTheta = 0) {
   const aim = aimAt(point);
-  // 转向阶段带一点位移：完全定轴的转头太机械，像是被钉住了
-  aim.radius *= rnd(0.92, 1.0);
-  aim.theta += rnd(-0.06, 0.06);
-  aim.phi = THREE.MathUtils.clamp(aim.phi + rnd(-0.04, 0.04), 0.3, Math.PI - 0.3);
-  const fly = { ...aim, target: aim.target.clone(), radius: finalRadius };
-  const hold = { ...fly, target: fly.target.clone(), theta: fly.theta + rnd(0.15, 0.35) };
+  aim.radius *= rnd(0.95, 1.0);            // 转向时喷口带来的少许位移
+  aim.theta += rnd(-0.05, 0.05);
+  aim.phi = THREE.MathUtils.clamp(aim.phi + rnd(-0.03, 0.03), 0.3, Math.PI - 0.3);
+
+  // arcTheta 让外推段同时转向，走一条弧线而不是直着往后退
+  const cruise = { ...aim, target: aim.target.clone(),
+                   theta: aim.theta + arcTheta * 0.55,
+                   radius: aim.radius + (finalRadius - aim.radius) * 0.75 };
+  const arrive = { ...aim, target: aim.target.clone(),
+                   theta: aim.theta + arcTheta, radius: finalRadius };
+  const orbit = { ...arrive, target: arrive.target.clone(),
+                  theta: arrive.theta + rnd(0.15, 0.35) };
+
   return [
-    { to: aim, dur: rnd(1.6, 2.3), ease: easeSoft },      // 瞄准，缓入缓出
-    { to: fly, dur: flySec, ease: easeInOut },            // 加速冲过去再减速
-    { to: hold, dur: holdSec, ease: (u) => u },           // 停留时缓慢环绕
+    { to: aim,     dur: rnd(1.7, 2.4),  ease: easeSoft, engine: "rcs" },
+    { to: cruise,  dur: burnSec * 0.45, ease: easeIn,   engine: "main" },
+    { to: arrive,  dur: burnSec * 0.55, ease: easeOut,  engine: "coast" },
+    { to: orbit,   dur: holdSec,        ease: (u) => u, engine: "orbit" },
   ];
 }
 
@@ -862,16 +928,22 @@ function nextAction() {
       : new THREE.Vector3(rnd(-FIELD_R, FIELD_R), rnd(-FIELD_R * 0.4, FIELD_R * 0.4),
                           rnd(-FIELD_R, FIELD_R));
     const r = wide ? rnd(150, 260) : rnd(20, 90);
-    startSegs(flyTo(point, r, rnd(3.5, 5.0), rnd(2.5, 6.0)));
+    // 退到全景时不倒车：主引擎朝盘外推，同时画一道大弧转头
+    const arc = wide
+      ? (Math.random() < 0.5 ? -1 : 1) * rnd(1.3, 2.1)
+      : (Math.random() < 0.5 ? -1 : 1) * rnd(0.2, 0.7);
+    startSegs(flyTo(point, r, wide ? rnd(5.0, 7.0) : rnd(3.5, 5.0),
+                    rnd(2.5, 6.0), arc));
     auto.lastWasSelect = false;
   }
 }
 
 function stepAuto() {
-  if (!auto.on) return;
+  if (!auto.on) { auto.engine = ""; return; }
   if (!auto.segs || auto.idx >= auto.segs.length) { nextAction(); return; }
 
   const seg = auto.segs[auto.idx];
+  auto.engine = seg.engine;
   const raw = (performance.now() - auto.t0) / (seg.dur * 1000);
   const u = seg.ease(THREE.MathUtils.clamp(raw, 0, 1));
   const f = auto.from, t = seg.to;
@@ -892,10 +964,11 @@ function setAuto(on) {
   auto.on = on;
   document.body.classList.toggle("auto", on);
   autoBtn.textContent = on ? "退出巡游" : "自动巡游";
-  elHudMode.textContent = on ? "自动驾驶" : "手动";
   refreshBgmName();
   if (on) {
     auto.to = null;
+    auto.segs = null;
+    auto.engine = "";
     auto.lastWasSelect = false;
     bgm.volume = 0.55;
     if (!bgm.src) loadBgm(0, false);
@@ -921,6 +994,15 @@ function escapeHtml(s) {
 // 预折叠成小写检索串，避免每次按键都重新拼
 const haystack = tracks.map((t) =>
   `${t.t}${t.a}${t.s}${t.u}`.toLowerCase());
+
+const searchBtn = document.getElementById("search-btn");
+const searchBox = document.getElementById("search-box");
+searchBtn.addEventListener("click", () => {
+  const on = !searchBox.classList.contains("on");
+  searchBox.classList.toggle("on", on);
+  searchBtn.classList.toggle("on", on);
+  if (on) document.getElementById("search").focus();
+});
 
 const elSearch = document.getElementById("search");
 const elResults = document.getElementById("results");
@@ -980,6 +1062,7 @@ elSearch.addEventListener("keydown", (e) => {
     if (hits.length) chooseHit(hits[cursor >= 0 ? cursor : 0]);
   } else if (e.key === "Escape") {
     elSearch.value = ""; elResults.classList.remove("on"); elSearch.blur();
+    searchBox.classList.remove("on"); searchBtn.classList.remove("on");
   }
 });
 elResults.addEventListener("click", (e) => {
@@ -988,7 +1071,9 @@ elResults.addEventListener("click", (e) => {
 });
 addEventListener("keydown", (e) => {
   if (e.key === "/" && document.activeElement !== elSearch) {
-    e.preventDefault(); elSearch.focus();
+    e.preventDefault();
+    searchBox.classList.add("on"); searchBtn.classList.add("on");
+    elSearch.focus();
   }
 });
 
@@ -1005,16 +1090,17 @@ const speedZero = document.getElementById("speed-zero");
 const labels = document.getElementById("hud-labels");
 const arcTgtL = document.getElementById("arc-tgt-l");
 const arcTgtR = document.getElementById("arc-tgt-r");
-const elBgmName = document.getElementById("bgm-name");
-const elHudSpeed = document.getElementById("hud-speed");
-const elHudMode = document.getElementById("hud-mode");
+const elBgmName = document.getElementById("f-bgm");
+const elSpeed = document.getElementById("speed-readout");
+const ICONS = Object.fromEntries(["main", "rcs", "auto", "lock", "rev"]
+  .map((k) => [k, document.getElementById(`ic-${k}`)]));
 
 // 弧心在屏幕中心略上方，弧长 90 度、以正下方为中点：右半段前进、左半段倒车
 const A_SPAN = 90, A_MID = 90;
 const A0 = A_MID + A_SPAN / 2;   // 左端（倒车满）
 const A1 = A_MID - A_SPAN / 2;   // 右端（前进满）
-// 零点放在弧长 1/3 处：绝大多数时候是前进，正向该占更长一段
-const A_ZERO = A0 + (A1 - A0) / 3;
+// 零点放在弧长 1/4 处：倒车用得少，正向该占四分之三
+const A_ZERO = A0 + (A1 - A0) / 4;
 const SPEED_FULL = 900;          // 量程上限 ly/s
 
 const polar = (cx, cy, r, deg) => {
@@ -1037,7 +1123,7 @@ function layoutHud() {
   // 圆心仍在屏幕中心略上方；半径缩到 1/3 后再高就会和准星叠在一起
   const cx = w / 2, cy = h * 0.48;
   const rSpeed = Math.min(h * 0.38, w * 0.3) / 3;
-  const rBgm = rSpeed + 11;      // 两条紧贴，中间只留出游标的位置
+  const rBgm = rSpeed + 24;      // 中间那圈留给速度读数
   hudGeom = { cx, cy, rSpeed, rBgm };
 
   arcSpeedBg.setAttribute("d", arcPath(cx, cy, rSpeed, A0, A1));
@@ -1059,16 +1145,18 @@ function layoutHud() {
   }).join("");
 
   labels.style.top = `${(cy + rBgm + 18).toFixed(0)}px`;
+  elSpeed.style.left = `${cx.toFixed(0)}px`;
+  elSpeed.style.top = `${(cy + rSpeed + 12).toFixed(0)}px`;
 
   // 攻击指示器的内圈弧，贴在槽位弧的内侧
-  const rt = innerWidth * 0.46 - 34;
-  const half = TARGET_SPREAD / 2 + 3;
+  const rt = innerWidth * 0.25;
+  const half = TARGET_SPREAD / 2;
   arcTgtL.setAttribute("d", arcPath(cx, innerHeight / 2, rt, 180 - half, 180 + half));
   arcTgtR.setAttribute("d", arcPath(cx, innerHeight / 2, rt, -half, half));
 }
 
 let shownSpeed = 0;
-function updateHud(signedSpeed, dt) {
+function updateHud(signedSpeed, dt, angRate, radRateSmooth) {
   if (!hudGeom) return;
   const { cx, cy, rSpeed } = hudGeom;
 
@@ -1083,17 +1171,26 @@ function updateHud(signedSpeed, dt) {
   const rad = (d * Math.PI) / 180;
   const ux = Math.cos(rad), uy = Math.sin(rad);      // 径向
   const tanx = -uy, tany = ux;                        // 切向
-  const mid = rSpeed + 3.5;
+  const mid = rSpeed - 3;        // 略微内移，免得顶到外环
   const tri = (ar, at) =>
     `${(cx + ux * ar + tanx * at).toFixed(1)},${(cy + uy * ar + tany * at).toFixed(1)}`;
   speedMark.setAttribute("points",
-    `${tri(mid + 5.5, 0)} ${tri(mid, -4.5)} ${tri(mid, 4.5)}`);
+    `${tri(mid + 5, 0)} ${tri(mid, -4.5)} ${tri(mid, 4.5)}`);
 
   const rev = shownSpeed < -1;
   hudSvg.classList.toggle("rev", rev);
   document.body.classList.toggle("rev", rev);
+
+  // 矢量喷口看视角是否在动；主引擎看是否在明显靠近目标
+  const turning = angRate > 0.12;
+  const closing = radRateSmooth < -Math.max(3, Math.abs(shownSpeed) * 0.15);
+  ICONS.rcs.classList.toggle("on", auto.on ? auto.engine === "rcs" : turning);
+  ICONS.main.classList.toggle("on", auto.on ? auto.engine === "main" : closing);
+  ICONS.auto.classList.toggle("on", auto.on);
+  ICONS.lock.classList.toggle("on", selected >= 0);
+  ICONS.rev.classList.toggle("on", rev);
   const abs = Math.abs(shownSpeed);
-  elHudSpeed.textContent = abs.toFixed(abs < 100 ? 1 : 0);
+  elSpeed.innerHTML = `${abs.toFixed(abs < 100 ? 1 : 0)} <em>ly/s</em>`;
 
   const total = arcBgm.getTotalLength();
   const pr = bgm.duration ? THREE.MathUtils.clamp(bgm.currentTime / bgm.duration, 0, 1) : 0;
@@ -1103,8 +1200,9 @@ function updateHud(signedSpeed, dt) {
 const BGM_TITLE = { "star-wish.m4a": "星愿 StarWish", "star-lalala.m4a": "StarLaLaLa" };
 function refreshBgmName() {
   const f = (bgm.currentSrc || "").split("/").pop();
-  elBgmName.textContent = bgm.paused && !auto.on
-    ? "—" : (BGM_TITLE[f] || "—");
+  const name = bgm.paused ? "—" : (BGM_TITLE[f] || "—");
+  elBgmName.textContent = name;
+  document.body.classList.toggle("bgm-on", !bgm.paused);
 }
 bgm.addEventListener("loadedmetadata", refreshBgmName);
 bgm.addEventListener("play", refreshBgmName);
@@ -1123,6 +1221,7 @@ function resize() {
   rtNext.setSize(w * dpr, h * dpr);
   layoutHud();
   layoutTargets();
+  syncSkew();
 }
 addEventListener("resize", resize);
 resize();
@@ -1133,6 +1232,9 @@ const lastCamPos = new THREE.Vector3();
 const camVel = new THREE.Vector3();
 const worldVel = new THREE.Vector3();
 let lastRadius = cam.radius;
+let lastTheta = cam.theta;
+let lastPhi = cam.phi;
+let radRateSmooth = 0;
 
 function frame(now) {
   // 下界不能省：dt 为负会让下面的 pow 指数翻转，平滑系数变成负数，decay 发散
@@ -1156,11 +1258,16 @@ function frame(now) {
   worldVel.subVectors(camera.position, lastCamPos).divideScalar(Math.max(dt, 1e-3));
   const totalSpeed = worldVel.length() / SCENE_SCALE;
   const radRate = (cam.radius - lastRadius) / Math.max(dt, 1e-3) / SCENE_SCALE;
-  lastRadius = cam.radius;
-  const signedSpeed = radRate > totalSpeed * 0.25 ? -totalSpeed : totalSpeed;
+  radRateSmooth += (radRate - radRateSmooth) * (1 - Math.pow(0.02, dt));
+  const angRate = (Math.abs(cam.theta - lastTheta) + Math.abs(cam.phi - lastPhi))
+                / Math.max(dt, 1e-3);
+  lastRadius = cam.radius; lastTheta = cam.theta; lastPhi = cam.phi;
+  // 退而不转才算倒车；一边外推一边转向是主引擎在画弧（比如退到全景）
+  const backing = radRate > totalSpeed * 0.25 && angRate < 0.10;
+  const signedSpeed = backing ? -totalSpeed : totalSpeed;
   lastCamPos.copy(camera.position);
   starMat.uniforms.uCamVel.value.copy(camVel);
-  updateHud(signedSpeed, dt);
+  updateHud(signedSpeed, dt, angRate, radRateSmooth);
 
   const excess = Math.max(speed - TRAIL_DEADZONE, 0);
   const want = THREE.MathUtils.clamp(
