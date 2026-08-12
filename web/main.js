@@ -353,7 +353,7 @@ function steerCenterStep() {
   att.inPitch += up * strength;
 }
 
-/* WASD 辅助平移（上下左右）、QE 滚转；俯仰/偏航交给右键指向线与右摇杆 */
+/* WASD 辅助平移（上下左右）、QE 滚转；俯仰/偏航交给右键指向线 */
 const held = new Set();
 const PAN_KEYS = { KeyW: "panU", KeyS: "panD", KeyA: "panL", KeyD: "panR" };
 const ROLL_KEYS = { KeyQ: "rollL", KeyE: "rollR" };
@@ -397,7 +397,7 @@ function panScreen(dx, dy) {
   }
 }
 
-// WASD 辅助平移：屏幕上下左右，速率与捏合/摇杆平移同一挡（RCS 平移上限）
+// WASD 辅助平移：屏幕上下左右，速率与捏合平移同一挡（RCS 平移上限）
 function panKeyStep(dt) {
   if (auto.on || auto.assist) return;   // 残留按住的键不能在自动/接敌航段里污染 goalTarget
   if (!held.has("panU") && !held.has("panD") && !held.has("panL") && !held.has("panR")) return;
@@ -422,7 +422,7 @@ function leashRadius() {
    会有参考基跳变。cam.theta/phi 只在帧末从 bodyFwd 反算，供自动驾驶体系
    （burnPlan/aimFrom/pivot 插值）读取，不再是手动姿态的驱动源；姿态旋转
    不触碰 radius/target，位置与朝向彻底解耦。
-   节流阀：滚轮/左杆改目标速度档位，v 收敛后沿视线平移 target。 */
+   节流阀：滚轮/方向簇上下改目标速度档位，v 收敛后沿视线平移 target。 */
 const FLIP_UP = new THREE.Vector3(0, 1, 0);
 const FLIP_RIGHT = new THREE.Vector3(1, 0, 0);
 const bodyFwd = new THREE.Vector3();
@@ -513,7 +513,7 @@ function attitudeStep(dt) {
   const ip = THREE.MathUtils.clamp(att.inPitch, -1, 1);
   const ir = (held.has("rollR") ? 1 : 0) - (held.has("rollL") ? 1 : 0);
   att.inYaw = 0; att.inPitch = 0;
-  const idleNow = opt.spin && !dragging && held.size === 0 && !joyActive
+  const idleNow = opt.spin && !dragging && held.size === 0 && pad.id < 0
     && !iy && !ip && !ir;
 
   if (idleNow) {
@@ -616,96 +616,39 @@ function throttleStep(dt) {
   cam.goalTarget.addScaledVector(bodyFwd, throttle.v * dt);
 }
 
-/* ── 触屏操控：左杆＝WASD 同职能的辅助平移（自由拖拽），右侧＝四方向
-   按钮簇（上下＝滚轮同职能的连续调速、左右＝翻滚，同 QE）——按钮式是为了
-   防止拖拽误触；俯仰/偏航交给指向线（右键/触屏单指按住），两者都不管
-   这两个轴。仅触屏可见。joys[1]（右侧）没有可拖拽 DOM，字段由下面的
-   方向按钮直接写入，joyStep 消费逻辑不用关心输入源是拖拽还是按钮。
-   frame 的 joyStep 里集中消费；左杆 setPointerCapture 捕获指针，
-   另一手仍可在画布上捏合缩放。 */
-const JOY_DEAD = 0.15;
-const joys = [
-  { el: document.getElementById("joy-left"), vx: 0, vy: 0, id: -1 },
-  { vx: 0, vy: 0, id: -1 },   // 右侧：四方向按钮簇写入，无拖拽 DOM
-];
-let joyActive = 0;
+/* ── 触屏操控：左侧四方向按钮簇（上下＝滚轮同职能的连续调速、左右＝翻滚，
+   同 QE），簇心是中键；右侧只有一个空格键。按钮式而非自由拖拽的摇杆——
+   拖拽杆的回中状态反复出问题，且手指滑动容易误触发方向。
+   俯仰/偏航交给指向线（右键/触屏单指按住），方向簇不管这两个轴。
+   仅触屏可见，frame 的 padStep 里集中消费。 */
+const pad = { vx: 0, vy: 0, id: -1 };   // 方向簇：按住即满值，松开归零
 
 {
-  const j = joys[0];
-  const nub = j.el.querySelector(".joy-nub");
-  const setNub = (x, y) => {
-    nub.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+  const KEYS = { "dpad-up": "up", "dpad-down": "down", "dpad-left": "left", "dpad-right": "right" };
+  const down = { up: false, down: false, left: false, right: false };
+  const apply = () => {
+    pad.vy = (down.up ? -1 : 0) + (down.down ? 1 : 0);
+    pad.vx = (down.left ? -1 : 0) + (down.right ? 1 : 0);
   };
-  const move = (e) => {
-    const r = j.el.getBoundingClientRect();
-    const max = r.width / 2;
-    // rect 是物理视口坐标，圆心与指针都换进旋转坐标系再作差
-    const c = toView(r.left + max, r.top + max);
-    const p = evPos(e);
-    let dx = p.x - c.x;
-    let dy = p.y - c.y;
-    const len = Math.hypot(dx, dy);
-    if (len > max) { dx *= max / len; dy *= max / len; }
-    setNub(dx, dy);
-    const m = Math.min(len / max, 1);
-    if (m < JOY_DEAD) { j.vx = 0; j.vy = 0; return; }
-    // 死区外重新归一化到 0..1，起步不跳变
-    const s = (m - JOY_DEAD) / (1 - JOY_DEAD) / (m * max);
-    j.vx = dx * s; j.vy = dy * s;
-  };
-  const release = () => {
-    if (j.id < 0) return;
-    j.id = -1;
-    joyActive -= 1;
-    j.el.classList.remove("drag");
-    j.vx = 0; j.vy = 0;
-    setNub(0, 0);
-  };
-  j.el.addEventListener("pointerdown", (e) => {
-    if (j.id >= 0) return;
-    j.el.setPointerCapture(e.pointerId);
-    j.id = e.pointerId;
-    joyActive += 1;
-    j.el.classList.add("drag");
-    setAuto(false);
-    move(e);
-  });
-  j.el.addEventListener("pointermove", (e) => { if (e.pointerId === j.id) move(e); });
-  j.el.addEventListener("pointerup", (e) => { if (e.pointerId === j.id) release(); });
-  j.el.addEventListener("pointercancel", (e) => { if (e.pointerId === j.id) release(); });
-  addEventListener("blur", release);
-}
-
-// 右侧四方向按钮：按住即满值、松开归零，直接写 joys[1] 的 vx/vy/id，
-// joyStep 的消费逻辑（含 jr.id>=0 才碰 held 滚转标记那部分）完全不用改
-{
-  const jr = joys[1];
-  const DPAD_KEYS = { "dpad-up": "up", "dpad-down": "down", "dpad-left": "left", "dpad-right": "right" };
-  const dpadHeld = { up: false, down: false, left: false, right: false };
-  const applyDpad = () => {
-    jr.vy = (dpadHeld.up ? -1 : 0) + (dpadHeld.down ? 1 : 0);
-    jr.vx = (dpadHeld.left ? -1 : 0) + (dpadHeld.right ? 1 : 0);
-  };
-  for (const [id, key] of Object.entries(DPAD_KEYS)) {
+  for (const [id, key] of Object.entries(KEYS)) {
     const el = document.getElementById(id);
     const press = (e) => {
       e.preventDefault();
       el.setPointerCapture(e.pointerId);
-      if (dpadHeld[key]) return;
-      dpadHeld[key] = true;
-      if (jr.id < 0) { jr.id = e.pointerId; joyActive += 1; }
-      applyDpad();
+      if (down[key]) return;
+      down[key] = true;
+      if (pad.id < 0) pad.id = e.pointerId;
+      apply();
       setAuto(false);
     };
     const release = () => {
-      if (!dpadHeld[key]) return;
-      dpadHeld[key] = false;
-      applyDpad();
-      if (!dpadHeld.up && !dpadHeld.down && !dpadHeld.left && !dpadHeld.right) {
-        jr.id = -1;
-        joyActive -= 1;
-        // 松开最后一个方向键才清 held 的滚转标记，否则 joyActive 归零后
-        // joyStep 直接早退，held 里的滚转标记会卡住
+      if (!down[key]) return;
+      down[key] = false;
+      apply();
+      if (!down.up && !down.down && !down.left && !down.right) {
+        pad.id = -1;
+        // 松开最后一个方向键才清 held 的滚转标记，否则 padStep 早退，
+        // held 里的滚转标记会卡住
         held.delete("rollL"); held.delete("rollR");
       }
     };
@@ -716,34 +659,25 @@ let joyActive = 0;
   }
 }
 
-// 左杆＝WASD 同职能的辅助平移，右杆纵轴＝滚轮同职能的连续调速，
-// 右杆横轴＝翻滚（同 QE，借用 held 那条既有输入线路）；无活动摇杆时零开销
-function joyStep(dt) {
-  if (!joyActive) return;
-  const [jl, jr] = joys;
-  // 握杆期间新启动的辅助驾驶也要被打断，否则杆量每帧被段插值覆盖
-  if (jl.vx || jl.vy || jr.vx || jr.vy) setAuto(false);
-  if ((jl.vx || jl.vy) && !auto.on && !auto.assist) {
-    const step = ENGINE.rcs.panMax * MANUAL_BOOST * dt;
-    panScreen(jl.vx * step, -jl.vy * step);
-  }
-  if (jr.vy) {
-    // 满杆每秒 400 ly/s
+// 纵轴＝滚轮同职能的连续调速，横轴＝翻滚（同 QE，借用 held 那条既有输入
+// 线路）；没按住方向键时零开销
+function padStep(dt) {
+  if (pad.id < 0) return;
+  // 按住期间新启动的辅助驾驶也要被打断，否则按键量每帧被段插值覆盖
+  if (pad.vx || pad.vy) setAuto(false);
+  if (pad.vy) {
+    // 按住每秒 400 ly/s
     throttle.gear = THREE.MathUtils.clamp(
-      throttle.gear - jr.vy * dt * 400 * SCENE_SCALE, GEAR_MIN, GEAR_MAX);
+      throttle.gear - pad.vy * dt * 400 * SCENE_SCALE, GEAR_MIN, GEAR_MAX);
   }
-  // 只在右杆真的被按住时才碰 held 里的滚转标记——否则左杆单独按住时
-  // jr.vx 恒为静止默认值 0，会走进 else 分支把键盘 Q/E 刚 add 的滚转清掉
-  if (jr.id >= 0) {
-    if (jr.vx > 0) { held.add("rollR"); held.delete("rollL"); }
-    else if (jr.vx < 0) { held.add("rollL"); held.delete("rollR"); }
-    else { held.delete("rollL"); held.delete("rollR"); }
-  }
+  if (pad.vx > 0) { held.add("rollR"); held.delete("rollL"); }
+  else if (pad.vx < 0) { held.add("rollL"); held.delete("rollR"); }
+  else { held.delete("rollL"); held.delete("rollR"); }
 }
 
 /* ── 指向线操控：右键/触屏单指按住不放，转向由「光标与屏幕中心的
    距离」决定，而不是拖拽增量——按住不动也会持续转，越靠边转得越快。
-   俯仰/偏航现在只有这一条输入线路（右摇杆已改接油门与翻滚），每帧读
+   俯仰/偏航现在只有这一条输入线路（方向簇只管油门与翻滚），每帧读
    当前指针位置。 */
 const elSteerLine = document.getElementById("steer-line");
 const elSteerDot = document.getElementById("steer-dot");
@@ -1265,7 +1199,7 @@ const panelRO = new ResizeObserver(() => syncSkew());
 panelRO.observe(panelLeft);
 panelRO.observe(panelRight);
 
-// 触屏窄横屏时槽位弧向内收，给两侧边缘的摇杆/方向簇让位——比原来的量再
+// 触屏窄横屏时槽位弧向内收，给两侧边缘的按钮簇让位——比原来的量再
 // 收紧一点，配合槽位本身缩小（.target 在这个断点下更窄更小字），
 // 避免弧与两侧控件视觉重叠
 function targetArcR() {
@@ -1274,7 +1208,7 @@ function targetArcR() {
     ? Math.min(base, Math.max(vw() / 2 - 280, 70)) : base;
 }
 
-// 槽位间距只看角度会跟半径脱节：R 被摇杆避让钳制得很小时，角度不变但
+// 槽位间距只看角度会跟半径脱节：R 被按钮簇避让钳制得很小时，角度不变但
 // 弧长（R·Δθ）会小于槽位实际高度，相邻槽位就会重叠。用槽位实际高度反推
 // 不重叠所需的最小张开角，跟设计角度取较大者——R 足够大（桌面）时效果
 // 不变，R 被压缩的触屏窄视口下自动放宽。装饰弧（layoutHud 里的内圈弧）
@@ -2597,8 +2531,8 @@ function updateHud(signedSpeed, dt, angRate, radRateSmooth) {
   // 手动：姿态灯看角速率，主推灯看节流收敛，反推灯看倒档（启发式兜底）
   const eng = inAuto ? auto.engine : "";
   const attRate = Math.abs(att.yaw) + Math.abs(att.pitch);
-  const panning = held.has("panU") || held.has("panD") || held.has("panL") || held.has("panR")
-    || !!(joys[0].vx || joys[0].vy);
+  const panning = held.has("panU") || held.has("panD")
+    || held.has("panL") || held.has("panR");
   // 漫游是一边主推一边转向的，engine 这一个字段表达不了，另给一路 rcsOn
   ICONS.rcs.classList.toggle("on",
     eng ? (eng === "rcs" || auto.rcsOn) : (attRate > 0.04 || turning || panning));
@@ -2678,7 +2612,7 @@ function frame(now) {
   const dt = THREE.MathUtils.clamp((now - prev) / 1000, 1 / 240, 0.1);
   prev = now;
   stepAuto(dt);
-  joyStep(dt);          // 杆量先落进姿态/节流输入
+  padStep(dt);          // 方向簇按键量先落进姿态/节流输入
   pointerSteerStep();   // 指向线同一路输入
   steerCenterStep();    // 中键长按转向银心，同一路输入
   panKeyStep(dt);       // WASD 辅助平移
@@ -2980,6 +2914,7 @@ if (!helpSeen) {
 } else {
   throttle.gear = INIT_GEAR;
 }
+
 
 
 

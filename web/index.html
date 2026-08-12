@@ -517,8 +517,8 @@
   }
   #rotate-toast.on { opacity: 1; }
   #rotate-toast[hidden] { display: none; }
-  /* 虚拟摇杆、中键/空格按钮仅触屏显示，样式在 pointer:coarse 块 */
-  .joy, #dpad, #mid-btn, #spc-btn { display: none; }
+  /* 方向簇、中键/空格按钮仅触屏显示，样式在 pointer:coarse 块 */
+  #dpad, #mid-btn, #spc-btn { display: none; }
 
   #footer {
     position: fixed; left: 0; right: 0; bottom: .7rem; z-index: 5;
@@ -593,9 +593,8 @@
   }
 
   /* 触屏进一步收紧信息窗并朝内靠：上面两条给的是"窄横屏通用"尺寸，
-     触屏还要再让出两侧摇杆/方向簇的空间（那一片外沿到 7.6rem 左右，
-     留半个 rem 余量到 8.3rem），面板整体再缩小一档、起始位置移到
-     摇杆簇之外 */
+     触屏还要再让出两侧按钮簇的空间（那一片外沿到 7.6rem 左右，留半个
+     rem 余量到 8.3rem），面板整体再缩小一档、起始位置移到按钮簇之外 */
   @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
     :root { --panel-l: 11rem; --panel-r: 10rem; }
     #panel-left { left: 8.3rem; padding: 1.5rem .8rem 1.5rem .7rem; }
@@ -624,31 +623,11 @@
   @media (pointer: coarse) {
     #stage { touch-action: none; }
     #tooltip { display: none; }
-    /* 左摇杆：自由拖拽的平移杆，两侧内收、中线下移，落在楔形面板让出的空区 */
-    .joy {
-      display: block; position: fixed; top: 68%; transform: translateY(-50%);
-      width: 6.5rem; height: 6.5rem; z-index: 8; border-radius: 50%;
-      border: 1px solid rgba(242, 200, 75, .2);
-      background: radial-gradient(circle, rgba(9, 15, 28, .3), rgba(9, 15, 28, .1) 72%);
-      backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-      touch-action: none;
-    }
-    #joy-left { left: 3rem; }
-    .joy-nub {
-      position: absolute; left: 50%; top: 50%; width: 2.6rem; height: 2.6rem;
-      border-radius: 50%; border: 1px solid rgba(242, 200, 75, .5);
-      background: radial-gradient(circle at 38% 34%,
-        rgba(242, 200, 75, .34), rgba(242, 200, 75, .1));
-      transform: translate(-50%, -50%);
-      transition: transform .15s ease;   /* 松手回中 */
-    }
-    .joy.drag .joy-nub { transition: none; }   /* 拖动中即时跟随 */
-
-    /* 右侧改四方向按钮簇（替代自由拖拽的摇杆，离散按住/松开，不会因为
-       手指滑动误触发方向）：上下=油门连续调速，左右=翻滚；中键按钮挪进
-       簇正中央，与左摇杆位置对称 */
+    /* 左侧四方向按钮簇：上下=油门连续调速，左右=翻滚；中键按钮在簇正中央。
+       按钮式而非自由拖拽的摇杆——拖拽杆的回中反复出问题，手指滑动也容易
+       误触发方向。两侧内收、中线下移，落在楔形面板让出的空区 */
     #dpad {
-      display: block; position: fixed; right: 3rem; top: 68%;
+      display: block; position: fixed; left: 3rem; top: 68%;
       transform: translateY(-50%); width: 6.5rem; height: 6.5rem; z-index: 8;
     }
     .dpad-btn {
@@ -672,33 +651,24 @@
     }
     #mid-btn:active { color: var(--accent); background: rgba(242, 200, 75, .16); }
 
-    /* 空格按钮：贴在左摇杆/方向簇之外，右侧控制簇正上方 */
+    /* 空格按钮：右侧独占一簇，与左边的方向簇同高对称，因此可以放大些 */
     #spc-btn {
       display: flex; align-items: center; justify-content: center;
-      position: fixed; right: 3.4rem; top: calc(68% - 6.6rem); z-index: 8;
-      width: 2.8rem; height: 2.8rem; border-radius: 50%;
+      position: fixed; right: 4.6rem; top: 68%; transform: translateY(-50%);
+      z-index: 8; width: 3.6rem; height: 3.6rem; border-radius: 50%;
       background: rgba(9, 15, 28, .3); color: var(--text-dim);
       border: 1px solid rgba(242, 200, 75, .3); touch-action: none;
     }
     #spc-btn:active { color: var(--accent); background: rgba(242, 200, 75, .16); }
   }
 
+  /* 窄横屏按钮簇避让：缩小、内收并下移，绕开槽位行与楔形面板 */
   @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
-    #spc-btn { top: calc(66% - 5.8rem); width: 2.3rem; height: 2.3rem; right: 2.2rem; }
-  }
-  @media (max-height: 1100px) {
-    body.fake-land #spc-btn { top: calc(66% - 5.8rem); width: 2.3rem; height: 2.3rem; right: 2.2rem; }
-  }
-
-  /* 窄横屏摇杆/按钮簇避让：缩小、内收并下移，绕开槽位行与楔形面板 */
-  @media (max-width: 1100px) and (orientation: landscape) and (pointer: coarse) {
-    .joy, #dpad { width: 5.6rem; height: 5.6rem; top: 66%; }
-    .joy-nub { width: 2.2rem; height: 2.2rem; }
-    #joy-left { left: 2rem; }
-    #dpad { right: 2rem; }
+    #dpad { width: 5.6rem; height: 5.6rem; top: 66%; left: 2rem; }
     .dpad-btn { width: 2rem; height: 2rem; }
     #mid-btn { width: 2.2rem; height: 2.2rem; }
-    /* 槽位随 JS 收窄的弧同步缩短、字更小，避开摇杆/方向簇/中键 */
+    #spc-btn { width: 3rem; height: 3rem; top: 66%; right: 3.4rem; }
+    /* 槽位随 JS 收窄的弧同步缩短、字更小，避开方向簇/中键/空格键 */
     .target {
       width: 7rem; min-height: 1.3rem; padding: .16rem .5rem;
       font-size: .5rem; gap: .3rem;
@@ -706,14 +676,12 @@
     .target .w { font-size: .46rem; }
   }
 
-  /* 伪横屏摇杆/按钮簇：等价窄横屏（旋转后的横向宽度即物理高度） */
+  /* 伪横屏按钮簇：等价窄横屏（旋转后的横向宽度即物理高度） */
   @media (max-height: 1100px) {
-    body.fake-land .joy, body.fake-land #dpad { width: 5.6rem; height: 5.6rem; top: 66%; }
-    body.fake-land .joy-nub { width: 2.2rem; height: 2.2rem; }
-    body.fake-land #joy-left { left: 2rem; }
-    body.fake-land #dpad { right: 2rem; }
+    body.fake-land #dpad { width: 5.6rem; height: 5.6rem; top: 66%; left: 2rem; }
     body.fake-land .dpad-btn { width: 2rem; height: 2rem; }
     body.fake-land #mid-btn { width: 2.2rem; height: 2.2rem; }
+    body.fake-land #spc-btn { width: 3rem; height: 3rem; top: 66%; right: 3.4rem; }
     body.fake-land .target {
       width: 7rem; min-height: 1.3rem; padding: .16rem .5rem;
       font-size: .5rem; gap: .3rem;
@@ -993,9 +961,7 @@
 </div>
 <audio id="bgm" preload="none"></audio>
 
-<div id="joy-left" class="joy" aria-hidden="true"><div class="joy-nub"></div></div>
-<!-- 右摇杆改四方向按钮式：上下=油门连续调速、左右=翻滚，防止拖拽误触；
-     中键挪到按钮簇正中央 -->
+<!-- 触屏左簇：四方向按钮，上下=油门连续调速、左右=翻滚，中键在簇正中央 -->
 <div id="dpad" aria-hidden="true">
   <button id="dpad-up" class="dpad-btn" type="button" aria-label="加速">▲</button>
   <button id="dpad-down" class="dpad-btn" type="button" aria-label="减速">▼</button>
@@ -1040,8 +1006,7 @@
     <div class="help-row"><span>PageUp / PageDown</span><b>循环切换目标</b></div>
     <div class="help-row"><span>「/」</span><b>搜索</b></div>
     <div class="help-grp">触屏</div>
-    <div class="help-row"><span>左摇杆</span><b>辅助平移</b></div>
-    <div class="help-row"><span>右摇杆</span><b>上下调速 · 左右滚转</b></div>
+    <div class="help-row"><span>左侧方向簇</span><b>上下调速 · 左右滚转</b></div>
     <div class="help-row"><span>双指捏合</span><b>缩放</b></div>
     <div class="help-row"><span>轻点</span><b>选中恒星（锁定）</b></div>
     <div class="help-row"><span>中键按钮</span><b>速度归零 · 长按转向银心</b></div>
