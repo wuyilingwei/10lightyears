@@ -2272,6 +2272,10 @@ for (const ev of ["pointerdown", "wheel"]) {
 addEventListener("keydown", (e) => {
   // 搜索框/下拉框里打 wasd 不算飞行操作
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  // F1-F3 直接调 setAuto，与三个模式按钮走同一入口；部分浏览器 F1 会弹自带帮助，需拦掉
+  if (e.code === "F1") { e.preventDefault(); setAuto(false); return; }
+  if (e.code === "F2") { e.preventDefault(); setAuto(true, "cruise"); return; }
+  if (e.code === "F3") { e.preventDefault(); setAuto(true, "wander"); return; }
   if (MOVE_KEYS[e.code]) setAuto(false);
 });
 
