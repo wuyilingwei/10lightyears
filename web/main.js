@@ -2908,11 +2908,22 @@ addEventListener("keydown", (e) => {
 
 let helpSeen = false;
 try { helpSeen = !!localStorage.getItem("hud.helpSeen"); } catch { /* 隐私模式 */ }
-if (!helpSeen) {
-  try { localStorage.setItem("hud.helpSeen", "1"); } catch { /* 隐私模式 */ }
-  openHelp();
-} else {
+if (helpSeen) {
   throttle.gear = INIT_GEAR;
+} else {
+  try { localStorage.setItem("hud.helpSeen", "1"); } catch { /* 隐私模式 */ }
+  // 首访指南要等开屏贺词（#splash，z-index 更高）先关掉再弹出——否则两层
+  // 蒙层同时叠着，贺词挡住指南，指南的全屏蒙层又挡在摇杆/按钮上面；触屏
+  // 第一次点摇杆其实点在指南的蒙层上把它关掉，杆本身纹丝不动，摸上去
+  // 跟失灵一样。开屏贺词关闭前已完成的情况在这里也兜住，不会永远不弹
+  const splashEl = document.getElementById("splash");
+  if (!splashEl || splashEl.classList.contains("out")) {
+    openHelp();
+  } else {
+    new MutationObserver((_, ob) => {
+      if (splashEl.classList.contains("out")) { ob.disconnect(); openHelp(); }
+    }).observe(splashEl, { attributes: true, attributeFilter: ["class"] });
+  }
 }
 
 
