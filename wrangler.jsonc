@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "10lightyears",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./web",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "10lightyears.voidcarve.com", "custom_domain": true }
+  ]
+}
